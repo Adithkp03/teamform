@@ -53,18 +53,23 @@ jobs:
       - name: Publish load result to job summary
         if: always()
         run: |
-          {
-            echo '## k6 board load result (CI stack, 100 VUs / 60s, full seed)'
-            echo
-            jq -r '"| metric | value |", "|---|---|",
-              "| p95 | \(.metrics.http_req_duration.values["p(95)"])ms |",
-              "| p90 | \(.metrics.http_req_duration.values["p(90)"])ms |",
-              "| avg | \(.metrics.http_req_duration.values.avg)ms |",
-              "| max | \(.metrics.http_req_duration.values.max)ms |",
-              "| requests | \(.metrics.http_reqs.values.count) |",
-              "| failed | \(.metrics.http_req_failed.values.fails) |",
-              "| checks passed | \(.metrics.checks.values.passes)/\(.metrics.checks.values.passes + .metrics.checks.values.fails) |"' loadtest/ci-k6-summary.json
-          } >> "$GITHUB_STEP_SUMMARY" || tail -40 k6-output.txt >> "$GITHUB_STEP_SUMMARY"
+          node -e '
+            try {
+              const m = require("./loadtest/ci-k6-summary.json").metrics;
+              const rows = [
+                ["p95", m.http_req_duration?.values?.["p(95)"] + "ms"],
+                ["p90", m.http_req_duration?.values?.["p(90)"] + "ms"],
+                ["avg", m.http_req_duration?.values?.avg + "ms"],
+                ["max", m.http_req_duration?.values?.max + "ms"],
+                ["requests", m.http_reqs?.values?.count],
+                ["failed", m.http_req_failed?.values?.fails ?? m.http_req_failed?.values?.passes],
+              ];
+              const lines = ["## k6 board load result (CI stack, 100 VUs / 60s, full seed)", "", "| metric | value |", "|---|---|",
+                ...rows.map(r => "| " + r[0] + " | " + r[1] + " |")];
+              require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+            } catch (e) {
+              require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, "## k6 summary parse failed\n```\n" + e.message + "\n```\n");
+            }'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
