@@ -53240,6 +53240,88 @@ data: ${msg.payload}
     });
     return;
   }
+  const clients = /* @__PURE__ */ new Set();
+  let ticking = false;
+  let tickCount = 0;
+  const fleetTick = async () => {
+    if (ticking || clients.size === 0) return;
+    ticking = true;
+    try {
+      tickCount += 1;
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `WITH l AS (SELECT pg_try_advisory_xact_lock($1) AS ok),
+                d AS (SELECT de.id FROM domain_events de, l
+                      WHERE l.ok AND de.dispatched_seq IS NULL
+                      ORDER BY de.id LIMIT $2
+                      FOR UPDATE OF de)
+           UPDATE domain_events SET dispatched_seq = nextval('domain_events_dispatch_seq')
+           WHERE id IN (SELECT id FROM d)`,
+          [ADVISORY_KEY, DISPATCH_BATCH]
+        );
+        if (tickCount % 60 === 0) {
+          await client.query(`DELETE FROM domain_events WHERE created_at < now() - interval '1 day' AND dispatched_seq IS NOT NULL`);
+        }
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {
+        });
+        throw e;
+      } finally {
+        client.release();
+      }
+      let minCursor = null;
+      for (const c of clients) if (!c.closed && (minCursor === null || c.cursor < minCursor)) minCursor = c.cursor;
+      if (minCursor === null) return;
+      const { rows } = await pool.query(
+        `SELECT dispatched_seq, t, op, row_id, team_id FROM domain_events
+         WHERE dispatched_seq IS NOT NULL AND dispatched_seq > $1
+         ORDER BY dispatched_seq LIMIT 2000`,
+        [minCursor.toString()]
+      );
+      if (rows.length === 0) return;
+      const userIds = [...new Set([...clients].filter((c) => !c.closed).map((c) => c.userId))];
+      const { rows: ledRows } = await pool.query(
+        "SELECT id, leader_id FROM teams WHERE leader_id = ANY($1::uuid[])",
+        [userIds]
+      );
+      const ledByUser = /* @__PURE__ */ new Map();
+      for (const r of ledRows) {
+        if (!ledByUser.has(r.leader_id)) ledByUser.set(r.leader_id, /* @__PURE__ */ new Set());
+        ledByUser.get(r.leader_id).add(r.id);
+      }
+      for (const c of clients) {
+        if (c.closed) continue;
+        const led = ledByUser.get(c.userId) ?? /* @__PURE__ */ new Set();
+        try {
+          for (const r of rows) {
+            const seq = BigInt(r.dispatched_seq);
+            if (seq <= c.cursor) continue;
+            if (r.t === "join_requests" && !led.has(r.team_id)) {
+              c.cursor = seq;
+              continue;
+            }
+            const payload = JSON.stringify({ t: r.t, op: r.op, id: r.row_id, team: r.team_id });
+            c.reply.raw.write(`id: ${r.dispatched_seq}
+event: change
+data: ${payload}
+
+`);
+            c.cursor = seq;
+          }
+        } catch {
+        }
+      }
+    } catch {
+    } finally {
+      ticking = false;
+    }
+  };
+  setInterval(() => {
+    void fleetTick();
+  }, POLL_MS);
   app2.get("/api/events", { preHandler: authenticate }, async (req, reply) => {
     const userId = req.userId;
     await rateLimit(`sse:${userId}`, 20, 60);
@@ -53247,7 +53329,7 @@ data: ${msg.payload}
     const { rows: tail } = await pool.query(
       `SELECT max(dispatched_seq) AS hi, min(dispatched_seq) AS lo FROM domain_events WHERE dispatched_seq IS NOT NULL`
     );
-    let hi = tail[0]?.hi == null ? 0n : BigInt(tail[0].hi);
+    const hi = tail[0]?.hi == null ? 0n : BigInt(tail[0].hi);
     const lo = tail[0]?.lo == null ? 0n : BigInt(tail[0].lo);
     const lastEventId = req.headers["last-event-id"];
     let cursor;
@@ -53267,62 +53349,11 @@ data: {"reason":"connected"}
 
 `);
     }
-    let closed = false;
-    let pollCount = 0;
-    const startedAt2 = Date.now();
-    const poll = async () => {
-      if (closed) return;
-      try {
-        pollCount += 1;
-        const client = await pool.connect();
-        try {
-          await client.query("BEGIN");
-          await client.query(
-            `WITH l AS (SELECT pg_try_advisory_xact_lock($1) AS ok),
-                  d AS (SELECT de.id FROM domain_events de, l
-                        WHERE l.ok AND de.dispatched_seq IS NULL
-                        ORDER BY de.id LIMIT $2
-                        FOR UPDATE OF de)
-             UPDATE domain_events SET dispatched_seq = nextval('domain_events_dispatch_seq')
-             WHERE id IN (SELECT id FROM d)`,
-            [ADVISORY_KEY, DISPATCH_BATCH]
-          );
-          if (pollCount % 60 === 0) {
-            await client.query(`DELETE FROM domain_events WHERE created_at < now() - interval '1 day' AND dispatched_seq IS NOT NULL`);
-          }
-          await client.query("COMMIT");
-        } catch (e) {
-          await client.query("ROLLBACK").catch(() => {
-          });
-          throw e;
-        } finally {
-          client.release();
-        }
-        const { rows: led } = await pool.query("SELECT id FROM teams WHERE leader_id = $1", [userId]);
-        const ledSet = new Set(led.map((r) => r.id));
-        const { rows } = await pool.query(
-          `SELECT dispatched_seq, t, op, row_id, team_id FROM domain_events
-           WHERE dispatched_seq IS NOT NULL AND dispatched_seq > $1
-           ORDER BY dispatched_seq LIMIT 200`,
-          [cursor.toString()]
-        );
-        for (const r of rows) {
-          if (r.t === "join_requests" && !ledSet.has(r.team_id)) continue;
-          const payload = JSON.stringify({ t: r.t, op: r.op, id: r.row_id, team: r.team_id });
-          reply.raw.write(`id: ${r.dispatched_seq}
-event: change
-data: ${payload}
-
-`);
-          cursor = BigInt(r.dispatched_seq);
-        }
-      } catch {
-      }
-      if (!closed) timer = setTimeout(tick, POLL_MS);
-    };
+    const state = { userId, reply, cursor, closed: false };
+    clients.add(state);
     const rotate = setTimeout(() => {
-      if (closed) return;
-      reply.raw.write(`id: ${cursor}
+      if (state.closed) return;
+      reply.raw.write(`id: ${state.cursor}
 event: rotate
 data: {"reason":"max_stream_age"}
 
@@ -53331,22 +53362,17 @@ data: {"reason":"max_stream_age"}
       reply.raw.end();
     }, MAX_STREAM_MS);
     const heartbeat = setInterval(() => {
-      if (!closed) reply.raw.write(`: hb
+      if (!state.closed) reply.raw.write(`: hb
 
 `);
     }, 25e3);
-    let timer;
-    const tick = () => {
-      void poll();
-    };
     const cleanup = () => {
-      closed = true;
+      state.closed = true;
+      clients.delete(state);
       clearTimeout(rotate);
       clearInterval(heartbeat);
-      if (timer) clearTimeout(timer);
     };
     req.raw.on("close", cleanup);
-    timer = setTimeout(tick, POLL_MS);
   });
 }
 

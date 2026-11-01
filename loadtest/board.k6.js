@@ -22,6 +22,9 @@ export const options = {
 const BASE = __ENV.BASE_URL;
 
 export function setup() {
+  // A pre-made token skips signup (used by CI and coexistence runs so the
+  // run itself never touches the per-IP auth rate limit).
+  if (__ENV.TOKEN) return { token: __ENV.TOKEN };
   const email = `loadtest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@load.test`;
   const res = http.post(
     `${BASE}/api/auth/signup`,
