@@ -1,12 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db.js';
 import { authenticate } from '../auth.js';
+import { cachedBoard, storeBoard } from '../boardcache.js';
 
 export default async function boardRoutes(app: FastifyInstance) {
   // The "looking for teammates" board. Single indexed query per side; this is the
   // endpoint the load test targets (p95 < 200 ms at 100 concurrent users).
   app.get('/api/board', { preHandler: authenticate }, async (req: any) => {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const hit = cachedBoard(limit);
+    if (hit) return hit;
     const teams = pool.query(
       `WITH page AS (
          SELECT t.id, t.name, t.wanted_skills, t.created_at, t.leader_id, t.member_count,
@@ -37,7 +40,9 @@ export default async function boardRoutes(app: FastifyInstance) {
       [limit],
     );
     const [teamsR, peopleR] = await Promise.all([teams, people]);
-    return { teams: teamsR.rows, people: peopleR.rows, generated_at: new Date().toISOString() };
+    const body = { teams: teamsR.rows, people: peopleR.rows, generated_at: new Date().toISOString() };
+    storeBoard(limit, body);
+    return body;
   });
 
   app.get('/api/health', async () => {

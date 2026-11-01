@@ -1,3 +1,4 @@
+import { invalidateBoard } from './boardcache.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { ApiError } from './errors.js';
@@ -15,6 +16,17 @@ export function buildApp(opts: { logger?: boolean } = {}) {
 
   app.addHook('onResponse', async (req, reply) => {
     record(req.routeOptions?.url ?? req.url, reply.statusCode, reply.elapsedTime);
+  });
+
+  // Board-cache invalidation at ROOT scope so it covers every route plugin
+  // (Fastify encapsulates plugin-local hooks). Runs after the handler
+  // committed: only 2xx clears the cache, so a rolled-back transaction
+  // (4xx/5xx) never invalidates. Cross-instance freshness is bounded by the
+  // 1s TTL, independent of SSE listeners (see boardcache.ts).
+  app.addHook('onResponse', async (req, reply) => {
+    if (req.method !== 'GET' && reply.statusCode < 300 && /^\/api\/(teams|requests|me)(\/|$)/.test(req.url)) {
+      invalidateBoard();
+    }
   });
 
   app.setErrorHandler((err: any, req: any, reply) => {
