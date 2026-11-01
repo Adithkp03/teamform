@@ -65,9 +65,18 @@ Target from the problem statement: **p95 < 200 ms with 100 concurrent users.**
   #14/#15 red at 375-389 ms with the ci-profile.txt sampler). The cached
   payload is public and user-independent; same-instance mutations are
   visible immediately, cross-instance within 1s (disclosed, matching the
-  poll-mode realtime latency). Remaining workload caveat: the k6 script
-  exercises the hot read path; a warm/cold/mutation mix is tracked as
-  follow-up.
+  poll-mode realtime latency). Mixed workload added (loadtest/board-mix.k6.js, in CI):
+  103 VUs total - 99 board readers + 4 paced mutator VUs (8 users)
+  running create/join/leave cycles within the app's own rate limits
+  (5 creates/min/user; an unpaced variant tripped 429s by design with
+  zero 5xx, so the committed workload paces below the limit). Local,
+  full seed: read p95 46.64ms, 472,282/472,282 checks - including
+  field-level read-your-write (team id/name/member_count verified after
+  create, join and leave) - 0.00% failed. The field-level checks caught
+  a real race: invalidation ran in an onResponse hook, which fires after
+  response bytes leave, so an instant client re-read could see the
+  pre-mutation snapshot (~2/20 window); invalidation moved to onSend
+  (before bytes leave), and the checks now pass 100%.
 - **Production measurement: not permitted by the host.** Vercel allows load
   testing only on Enterprise plans
   (<https://vercel.com/kb/guide/what-s-vercel-s-policy-regarding-load-testing-deployments>);

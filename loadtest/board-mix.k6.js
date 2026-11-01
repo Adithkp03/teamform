@@ -1,8 +1,11 @@
-// Mixed workload: 99 concurrent board readers + 1 mutator that continuously
-// creates, joins, and leaves teams. This exercises the board cache beyond
-// the hot read path: every mutation invalidates the same-instance cache,
-// so reader traffic is a real warm/cold mix, and the read-your-write check
-// proves post-commit invalidation under load.
+// Mixed workload: 99 concurrent board readers + 4 mutator VUs (103 VUs
+// total; the PS hot-read run with 100 board readers is board.k6.js, run
+// separately). The mutators continuously create, join, and leave teams.
+// This exercises the board cache beyond the hot read path: every mutation
+// invalidates the same-instance cache, so reader traffic is a real warm/
+// cold mix, and the field-level read-your-write checks below compare the
+// actual board fields (team id, member_count) after create/join/leave -
+// not just 200 statuses.
 // Target: p95 < 200 ms on reads WITH mutations in flight; no 5xx anywhere.
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
@@ -82,9 +85,15 @@ export function mutate(data) {
   if (!check(created, { 'create 201': (r) => r.status === 201 })) return;
   const team = created.json('team');
 
+  // Field-level read-your-write: the created team appears with its actual
+  // fields (same instance -> post-commit invalidation -> immediate).
+  const findOnBoard = (r, id) => (r.json('teams') || []).find((t) => t.id === id);
   const board = http.get(`${BASE}/api/board`, { headers: bearer(data.leader), tags: { name: 'GET /api/board' } });
   check(board, {
-    'read-your-write under load': (r) => r.status === 200 && (r.json('teams') || []).some((t) => t.id === team.id),
+    'ryw create: team on board with member_count 1': (r) => {
+      const t = r.status === 200 && findOnBoard(r, team.id);
+      return !!t && t.name === team.name && t.member_count === 1;
+    },
   });
 
   const joined = http.post(
@@ -94,8 +103,24 @@ export function mutate(data) {
   );
   if (!check(joined, { 'join 201': (r) => r.status === 201 })) return;
 
+  const board2 = http.get(`${BASE}/api/board`, { headers: bearer(data.leader), tags: { name: 'GET /api/board' } });
+  check(board2, {
+    'ryw join: member_count 2': (r) => {
+      const t = r.status === 200 && findOnBoard(r, team.id);
+      return !!t && t.member_count === 2;
+    },
+  });
+
   const leaveJ = http.post(`${BASE}/api/teams/${team.id}/leave`, null, { headers: bearer(data.joiner), tags: { name: 'POST /leave' } });
-  check(leaveJ, { 'joiner leave 200': (r) => r.status === 200 });
+  if (!check(leaveJ, { 'joiner leave 200': (r) => r.status === 200 })) return;
+
+  const board3 = http.get(`${BASE}/api/board`, { headers: bearer(data.leader), tags: { name: 'GET /api/board' } });
+  check(board3, {
+    'ryw leave: member_count 1': (r) => {
+      const t = r.status === 200 && findOnBoard(r, team.id);
+      return !!t && t.member_count === 1;
+    },
+  });
 
   const leaveL = http.post(`${BASE}/api/teams/${team.id}/leave`, null, { headers: bearer(data.leader), tags: { name: 'POST /leave' } });
   check(leaveL, { 'leader leave 200': (r) => r.status === 200 });

@@ -19,14 +19,19 @@ export function buildApp(opts: { logger?: boolean } = {}) {
   });
 
   // Board-cache invalidation at ROOT scope so it covers every route plugin
-  // (Fastify encapsulates plugin-local hooks). Runs after the handler
-  // committed: only 2xx clears the cache, so a rolled-back transaction
-  // (4xx/5xx) never invalidates. Cross-instance freshness is bounded by the
-  // 1s TTL, independent of SSE listeners (see boardcache.ts).
-  app.addHook('onResponse', async (req, reply) => {
+  // (Fastify encapsulates plugin-local hooks). onSend runs BEFORE the
+  // response bytes leave: a client can never receive a mutation's 2xx and
+  // then read a pre-mutation board snapshot on this instance (an onResponse
+  // hook left a real race - the client could re-read in the microseconds
+  // before the hook fired; caught by the mix workload's field-level
+  // read-your-write checks). Only 2xx clears the cache, so a rolled-back
+  // transaction (4xx/5xx) never invalidates. Cross-instance freshness is
+  // bounded by the 1s TTL, independent of SSE listeners (see boardcache.ts).
+  app.addHook('onSend', (req, reply, payload, done) => {
     if (req.method !== 'GET' && reply.statusCode < 300 && /^\/api\/(teams|requests|me)(\/|$)/.test(req.url)) {
       invalidateBoard();
     }
+    done();
   });
 
   app.setErrorHandler((err: any, req: any, reply) => {
