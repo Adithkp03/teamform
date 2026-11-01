@@ -21,7 +21,7 @@ limitation; BLOCKED = cannot be demonstrated in the available environment.
 | Teammate suggestions with explained scoring | DONE | scoring string explains each factor; timezone uses utc_offset_minutes only (no Calcutta/Kolkata divergence) |
 | >=20 API tests in CI | DONE | 58 API/integration tests (auth-security, core, race, sse) + 6 chaos tests, counted separately; CI green on every push |
 | Seed: 10k users / 2k teams | DONE | `db/seed-sql.mjs`; evidence `docs/seed-evidence/`; seed users have no login |
-| Load test: p95 < 200 ms @ 100 concurrent on board | BLOCKED/UNMET | not permitted on the Hobby host (vendor policy, Enterprise-only); local/CI measurements: 401-577 ms (2-vCPU sandbox + 100 SSE), 747-1120 ms (4-vCPU GitHub runner, board-only). 0 failures everywhere. See docs/load-test-report.md |
+| Load test: p95 < 200 ms @ 100 concurrent on board | BLOCKED/UNMET | not permitted on the Hobby host (vendor policy, Enterprise-only); local/CI measurements: 401-577 ms (2-vCPU sandbox + 100 SSE), 747-1120 ms (4-vCPU GitHub runner, board-only). 0 failures everywhere. Cause not yet attributed - open requirement with a documented next-diagnostic plan in docs/load-test-report.md |
 | React UI, phone + keyboard usable | DONE | mobile 390px + keyboard-only flows verified with screenshots |
 | Live URL on free tier | DONE | https://teamform-web.vercel.app + https://teamform-api.vercel.app (Vercel Hobby + Neon free, Singapore) |
 

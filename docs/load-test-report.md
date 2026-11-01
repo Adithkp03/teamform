@@ -56,17 +56,28 @@ project**, and that is the honest headline:
 
 The CI-stack runs (`.github/workflows/loadtest-local.yml`, every push) are
 board-only - the PS minimum scenario; the sandbox runs add 100 concurrent SSE
-streams - a harder robustness scenario. Query cost is NOT the limiter
-(EXPLAIN ANALYZE on the full seed: 4.5 ms / 2.4 ms per board query, with or
-without fresh planner statistics - measured before/after VACUUM ANALYZE on
-identical data: 3.1/1.9 ms vs 2.2/1.8 ms). Zero failures in every run. The
-limiter is CPU contention on shared free compute (API + Postgres + the k6
-generator on the same small box; GitHub runner CPUs measure slower than the
-sandbox's). A `VACUUM ANALYZE` was added to `db/seed-sql.mjs` on a
-planner-stats hypothesis that measurement then REFUTED - it is kept as bulk-
-load hygiene, not as a performance fix. Closing the last gap would need less
-contended compute (a paid runner class, a deployed region-colocated stack,
-or a host that permits load testing), not more query work.
+streams - a harder robustness scenario. Zero failures in every run.
+
+**What is known:** per-query cost is small (EXPLAIN ANALYZE on the full seed:
+4.5 ms / 2.4 ms per board query; before/after VACUUM ANALYZE on identical
+data: 3.1/1.9 ms vs 2.2/1.8 ms - a planner-stats hypothesis was tested and
+refuted; the ANALYZE remains in `db/seed-sql.mjs` as bulk-load hygiene only).
+A CPU-contention hypothesis (API + Postgres + the k6 generator sharing a
+small box) is consistent with an older top snapshot
+(`docs/loadtest-local/cpu-during-load.txt`, autocannon era: Postgres backends
+~165% of 2 vCPUs) but is **not proven** for the current k6 setup - no
+per-process utilization was captured during these runs, and GitHub-runner vs
+sandbox differences are uncontrolled comparisons.
+
+**Not yet excluded:** serialization inside the API (single Node process),
+JWT verification cost per request, middleware order, pool queueing policy,
+the k6 threshold/benchmark setup itself, and tsx (uncompiled) overhead. The
+next diagnostic step, in order, with no paid services: (1) capture per-process
+CPU/IO for API vs Postgres vs k6 during a full-seed run; (2) rerun with the
+API compiled (prod runs an esbuild bundle; CI currently runs tsx); (3) rerun
+with a no-op authenticated endpoint to separate framework+auth overhead from
+board-query work; (4) only then attribute. The requirement remains open, not
+waived; not all measurable environments have been exhausted.
 
 ## Realtime under load (SSE, poll mode)
 
