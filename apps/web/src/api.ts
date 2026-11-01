@@ -13,7 +13,9 @@ export async function api<T = any>(
   const res = await fetch(`${BASE}${path}`, {
     method: opts.method ?? 'GET',
     headers: {
-      'content-type': 'application/json',
+      // Only label JSON when there IS a JSON body: Fastify rejects an empty
+      // body carrying content-type application/json.
+      ...(opts.body === undefined ? {} : { 'content-type': 'application/json' }),
       ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
       ...(opts.idempotencyKey ? { 'idempotency-key': opts.idempotencyKey } : {}),
     },
