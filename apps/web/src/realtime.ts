@@ -1,37 +1,27 @@
-// Live updates: Supabase Realtime (postgres_changes) when configured, otherwise
-// a 15s poll fallback so the board is never stale. Subscribers get poked to refetch.
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+// Live updates: SSE from the API (Postgres LISTEN/NOTIFY) as the primary push
+// channel. On every connect/reconnect the server sends a `sync` event and the
+// client refetches, so changes missed during a disconnect are recovered by
+// resync. A 60s poll remains as a safety net only. If no API URL is
+// configured (pure static demo), fall back to 15s polling.
 
-let supabase: SupabaseClient | null = null;
-let realtimeActive = false;
+let sseActive = false;
 
 export function subscribeBoardChanges(onChange: () => void, token: string | null): () => void {
-  const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-  const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+  const apiUrl = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
 
-  if (url && anon && token) {
-    if (!supabase) {
-      supabase = createClient(url, anon, {
-        auth: { persistSession: false, autoRefreshToken: false },
-        accessToken: async () => token,
-      });
-    }
-    const channel = supabase
-      .channel('teamform-board')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, onChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_members' }, onChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'join_requests' }, onChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, onChange)
-      .subscribe((status) => { realtimeActive = status === 'SUBSCRIBED'; });
-    // Missed-event safety net: even with realtime, refetch every 60s. A dropped
-    // socket reconnects, but a change during the gap would otherwise be missed.
+  if (token) {
+    const es = new EventSource(`${apiUrl}/api/events?token=${encodeURIComponent(token)}`);
+    es.addEventListener('sync', () => { sseActive = true; onChange(); });
+    es.addEventListener('change', onChange);
+    // EventSource reconnects automatically after errors; the reconnect gets a
+    // fresh `sync` event, which triggers a refetch - missed events covered.
     const poll = setInterval(onChange, 60_000);
-    return () => { clearInterval(poll); supabase?.removeChannel(channel); };
+    return () => { clearInterval(poll); es.close(); sseActive = false; };
   }
 
-  realtimeActive = false;
+  sseActive = false;
   const poll = setInterval(onChange, 15_000);
   return () => clearInterval(poll);
 }
 
-export const isRealtime = () => realtimeActive;
+export const isRealtime = () => sseActive;

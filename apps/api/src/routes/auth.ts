@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import bcrypt from 'bcryptjs';
 import { pool } from '../db.js';
+import { rateLimit } from '../ratelimit.js';
 import { authenticate, signToken } from '../auth.js';
 import { parse } from '../util.js';
 import { errors } from '../errors.js';
@@ -28,8 +30,46 @@ export default async function authRoutes(app: FastifyInstance) {
     });
   }
 
+  const credSchema = z.object({
+    email: z.string().trim().email().max(254),
+    password: z.string().min(8).max(128),
+  });
+
+  app.post('/api/auth/signup', async (req) => {
+    const body = parse(credSchema.extend({ display_name: z.string().trim().min(1).max(80) }), req.body);
+    await rateLimit(`auth:${req.ip}`, 10, 60);
+    const password_hash = await bcrypt.hash(body.password, 10);
+    const id = crypto.randomUUID();
+    try {
+      await pool.query(
+        `INSERT INTO profiles (id, display_name, email, password_hash) VALUES ($1, $2, $3, $4)`,
+        [id, body.display_name, body.email.toLowerCase(), password_hash],
+      );
+    } catch (e: any) {
+      if (e?.code === '23505') throw errors.conflict('email_taken', 'An account with this email already exists');
+      throw e;
+    }
+    return { token: signToken(id), user_id: id };
+  });
+
+  app.post('/api/auth/login', async (req) => {
+    const body = parse(credSchema, req.body);
+    await rateLimit(`auth:${req.ip}`, 10, 60);
+    const { rows } = await pool.query(
+      `SELECT id, password_hash FROM profiles WHERE lower(email) = lower($1) AND password_hash IS NOT NULL`,
+      [body.email],
+    );
+    // Same response for unknown email and wrong password: no account enumeration.
+    if (!rows.length || !(await bcrypt.compare(body.password, rows[0].password_hash))) {
+      throw errors.unauthorized();
+    }
+    return { token: signToken(rows[0].id), user_id: rows[0].id };
+  });
+
   app.get('/api/me', { preHandler: authenticate }, async (req: any) => {
-    const { rows } = await pool.query('SELECT * FROM profiles WHERE id = $1', [req.userId]);
+    const { rows } = await pool.query(
+      `SELECT id, display_name, skills, timezone, utc_offset_minutes, looking_for_team, email, created_at, last_active_at
+       FROM profiles WHERE id = $1`, [req.userId]);
     if (!rows.length) throw errors.notFound('Profile not found; create it with PUT /api/me');
     return { profile: rows[0] };
   });

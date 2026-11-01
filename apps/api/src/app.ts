@@ -6,6 +6,7 @@ import authRoutes from './routes/auth.js';
 import teamRoutes from './routes/teams.js';
 import boardRoutes from './routes/board.js';
 import suggestionRoutes from './routes/suggestions.js';
+import eventRoutes from './routes/events.js';
 
 export function buildApp(opts: { logger?: boolean } = {}) {
   const app = Fastify({ logger: opts.logger ?? false });
@@ -16,7 +17,7 @@ export function buildApp(opts: { logger?: boolean } = {}) {
     record(req.routeOptions?.url ?? req.url, reply.statusCode, reply.elapsedTime);
   });
 
-  app.setErrorHandler((err: any, _req, reply) => {
+  app.setErrorHandler((err: any, req: any, reply) => {
     if (err instanceof ApiError) {
       return reply.code(err.statusCode).send({ error: { code: err.code, message: err.message } });
     }
@@ -35,6 +36,7 @@ export function buildApp(opts: { logger?: boolean } = {}) {
   app.register(teamRoutes);
   app.register(boardRoutes);
   app.register(suggestionRoutes);
+  app.register(eventRoutes);
 
   return app;
 }

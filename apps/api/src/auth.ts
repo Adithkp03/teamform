@@ -1,4 +1,4 @@
-import jwt from 'jsonwebtoken';
+import jwt, { type SignOptions } from 'jsonwebtoken';
 import { errors } from './errors.js';
 
 const secret = () => {
@@ -7,14 +7,13 @@ const secret = () => {
   return s;
 };
 
-export function signToken(userId: string): string {
-  // 30d for local dev ergonomics; Supabase-issued tokens in prod carry their own exp.
-  return jwt.sign({ sub: userId }, secret(), { expiresIn: '30d' });
+export function signToken(userId: string, expiresIn: SignOptions['expiresIn'] = '7d'): string {
+  return jwt.sign({ sub: userId, iss: 'teamform-api' }, secret(), { expiresIn });
 }
 
 export function verifyToken(token: string): string {
   try {
-    const payload = jwt.verify(token, secret()) as jwt.JwtPayload;
+    const payload = jwt.verify(token, secret(), { issuer: 'teamform-api' }) as jwt.JwtPayload;
     if (!payload.sub) throw new Error('no sub');
     return payload.sub;
   } catch {

@@ -7,11 +7,11 @@ correctness proven under concurrency.
 
 ## Stack
 
-- **API**: Node 22 + Fastify (TypeScript), stateless; runs locally, in Docker, or as Vercel serverless functions
-- **Database**: PostgreSQL 16 (Supabase in production, Docker locally) - the correctness backbone
-- **Realtime**: Supabase Realtime (`postgres_changes`) with a polling fallback
+- **API**: Node 22 + Fastify (TypeScript), stateless; runs locally, in Docker, or on Render (free tier, no card)
+- **Database**: PostgreSQL 16 (Neon serverless free tier in production, Docker locally) - the correctness backbone
+- **Realtime**: Server-sent events over Postgres LISTEN/NOTIFY (portable, no vendor lock-in), with resync-on-reconnect and a 60s polling safety net
 - **Web**: React 18 + Vite + Tailwind; mobile-first, fully keyboard-operable
-- **Tests**: Vitest against a real Postgres (34 tests incl. a 50-way race test)
+- **Tests**: Vitest against a real Postgres (54 tests: 50-way race, idempotency, auth/JWT hardening, SSE push)
 - **Load test**: k6 (target: p95 < 200 ms on `GET /api/board` at 100 concurrent users)
 
 ## Quick start (one command)

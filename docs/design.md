@@ -36,20 +36,28 @@ keeps it across network retries.
 
 ## Security
 
-JWT auth (Supabase-issued HS256 tokens in production). Authorization checks
-happen inside the transaction (leader-only accept/decline/remove/rotate). Invite
-codes: 50 bits of entropy (10 chars, Crockford base32, unambiguous), expiring,
-rotatable, with per-user fixed-window rate limits on redemption (10/min) so
-brute force is infeasible (~10^6 years at limit). All input validated with zod;
-all SQL parameterized; browsers get read-only RLS-scoped access via Supabase
-anon key, writes only through the API.
+Email + password signup (bcrypt, cost 10), HS256 JWTs with a 7-day expiry and
+an issuer claim; expired, forged, tampered, and wrong-issuer tokens are
+rejected (tested). Login and signup are rate limited (10/min/IP) and return an
+identical 401 for unknown email vs wrong password, so accounts cannot be
+enumerated. Password hashes are never selected into API responses.
+Authorization checks happen inside the transaction (leader-only
+accept/decline/remove/rotate). Invite codes: 50 bits of entropy (10 chars,
+Crockford base32, unambiguous), expiring, rotatable, with per-user fixed-window
+rate limits on redemption (10/min) so brute force is infeasible (~10^6 years
+at limit). All input validated with zod; all SQL parameterized; browsers never
+touch the database directly - reads and writes go through the API only.
 
 ## Realtime
 
-Supabase Realtime `postgres_changes` pushes team/member/request changes to every
-client (serverless can't hold WebSockets). Plus a 60s refetch safety net: a
-change missed during a socket reconnect is never lost. No-Realtime environments
-fall back to 15s polling.
+Postgres triggers on teams/members/requests/profiles `pg_notify` a single
+`board_events` channel; the API holds one LISTEN connection per SSE client and
+streams thin change signals over `GET /api/events` (JWT-authenticated). On
+every connect and reconnect the server sends a `sync` event and the client
+refetches board state, so a change missed during a disconnect is recovered by
+resync rather than replay. A 60s refetch interval remains as a safety net;
+without an API URL the UI falls back to 15s polling. SSE (not WebSocket) keeps
+proxying trivial on Render and works through any Postgres host.
 
 ## Performance
 
@@ -65,8 +73,10 @@ p95 target < 200 ms at 100 concurrent users - measured results and methodology
   optimistic concurrency means retry storms; row locks queue losers cleanly.
 - **Table-based rate limits over Redis**: one less moving part on free tiers;
   fixed windows are slightly fuzzy at boundaries - acceptable for abuse control.
-- **Supabase Realtime over self-hosted WS**: zero servers to run; couples us to
-  Supabase for the push path only (fallback is polling).
+- **SSE over LISTEN/NOTIFY instead of a hosted realtime service**: portable
+  across any Postgres (Neon today, anything tomorrow), no per-message pricing,
+  no vendor lock-in. Cost: one DB connection per open stream, fine at
+  hackathon scale; events are signals (clients refetch), not full payloads.
 
 ## With one more week
 
