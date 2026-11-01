@@ -14,8 +14,8 @@ test('board badge marks a truncated first page with + and an exact count without
   const { rows: [h] } = await client.query(`SELECT id FROM hackathons LIMIT 1`);
   // 26 teams > 24-card first page. One leader per team (one-team-per-person invariant).
   const { rows: leaders } = await client.query(
-    `INSERT INTO profiles (display_name, is_seed, looking_for_team)
-     SELECT 'Badge Seed Leader ' || g, true, false FROM generate_series(1, 26) g RETURNING id`);
+    `INSERT INTO profiles (id, display_name, is_seed, looking_for_team)
+     SELECT gen_random_uuid(), 'Badge Seed Leader ' || g, true, false FROM generate_series(1, 26) g RETURNING id`);
   for (let i = 0; i < 26; i++) {
     const { rows: [t] } = await client.query(
       `INSERT INTO teams (hackathon_id, name, leader_id, invite_code, invite_expires_at)
