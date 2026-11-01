@@ -1,0 +1,20 @@
+name: Load test (live URL)
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Base URL of the deployed app (e.g. https://teamform.vercel.app)'
+        required: true
+      seed_token:
+        description: 'A valid JWT for a seed user (from dev-login or Supabase)'
+        required: true
+jobs:
+  k6:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: grafana/setup-k6-action@v1
+      - name: Board endpoint: 100 concurrent users, p95 < 200ms
+        run: k6 run -e BASE_URL=${{ inputs.target_url }} -e TOKEN='${{ inputs.seed_token }}' --out json=loadtest/results.json loadtest/board.k6.js
+      - uses: actions/upload-artifact@v4
+        with: { name: k6-results, path: loadtest/results.json }

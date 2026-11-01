@@ -1,0 +1,33 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: teamform
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  api:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/teamform
+      JWT_SECRET: dev-secret-change-me
+      ALLOW_DEV_LOGIN: "true"
+      PORT: "3000"
+    ports: ["3000:3000"]
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "node /app/db/migrate.mjs && node /app/apps/api/src/server.js"
+  web:
+    build: ./apps/web
+    ports: ["5173:80"]
+    depends_on: [api]
+volumes:
+  pgdata:

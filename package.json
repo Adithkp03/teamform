@@ -1,0 +1,16 @@
+{
+  "name": "teamform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Race-proof team formation at scale - Hack4Hack Crew Hiring Challenge 2026, PS1",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "migrate": "node db/migrate.mjs",
+    "seed": "node db/seed.mjs",
+    "dev": "npm run dev -w @teamform/api",
+    "test": "npm run test -w @teamform/api",
+    "build": "npm run build -w @teamform/web",
+    "chaos": "bash scripts/chaos.sh"
+  },
+  "engines": { "node": ">=20" }
+}
