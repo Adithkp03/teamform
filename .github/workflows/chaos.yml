@@ -1,0 +1,19 @@
+name: Chaos
+on: [push, pull_request]
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Kill the API mid-join-storm, then check database invariants
+        run: bash scripts/chaos.sh 2>&1 | tee /tmp/chaos.log
+      - name: Publish invariant results
+        if: always()
+        run: |
+          echo '## Chaos test: API killed mid-join-storm' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E 'PASS|FAIL' /tmp/chaos.log >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
