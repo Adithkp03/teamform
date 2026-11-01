@@ -7,24 +7,27 @@ export default async function boardRoutes(app: FastifyInstance) {
   // endpoint the load test targets (p95 < 200 ms at 100 concurrent users).
   app.get('/api/board', { preHandler: authenticate }, async (req: any) => {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
-    const teams = await pool.query(
-      `SELECT t.id, t.name, t.wanted_skills, t.created_at,
-              h.team_size_min, h.team_size_max,
-              count(tm.user_id)::int AS member_count,
-              (count(tm.user_id) >= h.team_size_min) AS is_complete,
+    const teams = pool.query(
+      `WITH page AS (
+         SELECT t.id, t.name, t.wanted_skills, t.created_at, t.leader_id, t.member_count,
+                h.team_size_min, h.team_size_max
+         FROM teams t
+         JOIN hackathons h ON h.id = t.hackathon_id
+         WHERE t.looking_for_members
+           AND t.member_count < h.team_size_max
+         ORDER BY t.created_at DESC
+         LIMIT $1
+       )
+       SELECT page.id, page.name, page.wanted_skills, page.created_at,
+              page.team_size_min, page.team_size_max, page.member_count,
+              (page.member_count >= page.team_size_min) AS is_complete,
               p.display_name AS leader_name
-       FROM teams t
-       JOIN hackathons h ON h.id = t.hackathon_id
-       JOIN team_members tm ON tm.team_id = t.id
-       JOIN profiles p ON p.id = t.leader_id
-       WHERE t.looking_for_members
-       GROUP BY t.id, h.team_size_min, h.team_size_max, p.display_name
-       HAVING count(tm.user_id) < h.team_size_max
-       ORDER BY t.created_at DESC
-       LIMIT $1`,
+       FROM page
+       JOIN profiles p ON p.id = page.leader_id
+       ORDER BY page.created_at DESC`,
       [limit],
     );
-    const people = await pool.query(
+    const people = pool.query(
       `SELECT p.id, p.display_name, p.skills, p.timezone
        FROM profiles p
        WHERE p.looking_for_team
@@ -33,7 +36,8 @@ export default async function boardRoutes(app: FastifyInstance) {
        LIMIT $1`,
       [limit],
     );
-    return { teams: teams.rows, people: people.rows, generated_at: new Date().toISOString() };
+    const [teamsR, peopleR] = await Promise.all([teams, people]);
+    return { teams: teamsR.rows, people: peopleR.rows, generated_at: new Date().toISOString() };
   });
 
   app.get('/api/health', async () => {

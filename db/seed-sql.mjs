@@ -83,6 +83,11 @@ const counts = await client.query(`SELECT (SELECT count(*) FROM profiles) AS use
 await client.query(`UPDATE domain_events SET dispatched_seq = nextval('domain_events_dispatch_seq') WHERE dispatched_seq IS NULL`);
 // Bulk inserts leave the planner blind; without fresh statistics the board
 // queries pick seq-scan plans (~300ms floor measured in CI before this).
+// Triggers maintain member_count on insert; recompute anyway so the seed is
+// correct even when replayed over data loaded before migration 0005.
+await client.query(`UPDATE teams t SET member_count = c.n
+  FROM (SELECT team_id, count(*)::int AS n FROM team_members GROUP BY team_id) c
+  WHERE t.id = c.team_id`);
 await client.query('VACUUM ANALYZE');
 console.log('done:', counts.rows[0]);
 await client.end();
