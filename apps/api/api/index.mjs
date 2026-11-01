@@ -84,7 +84,7 @@ var require_queue = __commonJS({
       if (!(_concurrency >= 1)) {
         throw new Error("fastqueue concurrency must be equal to or greater than 1");
       }
-      var cache = reusify(Task);
+      var cache2 = reusify(Task);
       var queueHead = null;
       var queueTail = null;
       var _running = 0;
@@ -163,7 +163,7 @@ var require_queue = __commonJS({
         return _running === 0 && self.length() === 0;
       }
       function push(value, done) {
-        var current = cache.get();
+        var current = cache2.get();
         current.context = context;
         current.release = release;
         current.value = value;
@@ -184,7 +184,7 @@ var require_queue = __commonJS({
         }
       }
       function unshift(value, done) {
-        var current = cache.get();
+        var current = cache2.get();
         current.context = context;
         current.release = release;
         current.value = value;
@@ -206,7 +206,7 @@ var require_queue = __commonJS({
       }
       function release(holder) {
         if (holder) {
-          cache.release(holder);
+          cache2.release(holder);
         }
         var next = queueHead;
         if (next && _running <= _concurrency) {
@@ -256,7 +256,7 @@ var require_queue = __commonJS({
             errorHandler2(new Error("abort"), val);
           }
           callback.call(context2, new Error("abort"));
-          cache.release(current);
+          cache2.release(current);
           current = next;
         }
         self.drain = noop;
@@ -4185,7 +4185,7 @@ var require_content_type = __commonJS({
     var quotedPairReg = /\\([\t\u0020-\u00ff])/gu;
     var typeNameReg = /^[\w!#$%&'*+.^`|~-]+$/;
     var subtypeNameReg = /^[\w!#$%&'*+.^`|~-]+\s*$/;
-    var cache = new Fifo(100);
+    var cache2 = new Fifo(100);
     var ContentType = class _ContentType {
       #valid = false;
       #empty = true;
@@ -4199,7 +4199,7 @@ var require_content_type = __commonJS({
        * @type {Fifo<ContentType>}
        */
       static get cache() {
-        return cache;
+        return cache2;
       }
       /**
        * Create a ContentType instance from a header value. If the value has been
@@ -4208,10 +4208,10 @@ var require_content_type = __commonJS({
        * @returns {ContentType | undefined}
        */
       static from(headerValue) {
-        let contentType = cache.get(headerValue);
+        let contentType = cache2.get(headerValue);
         if (contentType !== void 0) return contentType;
         contentType = new _ContentType(headerValue);
-        cache.set(headerValue, contentType);
+        cache2.set(headerValue, contentType);
         return contentType;
       }
       constructor(headerValue) {
@@ -9190,12 +9190,12 @@ var require_levels = __commonJS({
     function genLsCache(instance) {
       const formatter = instance[formattersSym].level;
       const { labels } = instance.levels;
-      const cache = {};
+      const cache2 = {};
       for (const label in labels) {
         const level = formatter(labels[label], Number(label));
-        cache[label] = JSON.stringify(level).slice(0, -1);
+        cache2[label] = JSON.stringify(level).slice(0, -1);
       }
-      instance[lsCacheSym] = cache;
+      instance[lsCacheSym] = cache2;
       return instance;
     }
     function isStandardLevel(level, useOnlyCustomLevels) {
@@ -29572,7 +29572,7 @@ var require_range = __commonJS({
         range = range.replace(BUILDSTRIPRE, "");
         const memoOpts = (this.options.includePrerelease && FLAG_INCLUDE_PRERELEASE) | (this.options.loose && FLAG_LOOSE);
         const memoKey = memoOpts + ":" + range;
-        const cached = cache.get(memoKey);
+        const cached = cache2.get(memoKey);
         if (cached) {
           return cached;
         }
@@ -29606,7 +29606,7 @@ var require_range = __commonJS({
           rangeMap.delete("");
         }
         const result = [...rangeMap.values()];
-        cache.set(memoKey, result);
+        cache2.set(memoKey, result);
         return result;
       }
       intersects(range, options) {
@@ -29645,7 +29645,7 @@ var require_range = __commonJS({
     };
     module.exports = Range;
     var LRU = require_lrucache();
-    var cache = new LRU();
+    var cache2 = new LRU();
     var parseOptions = require_parse_options();
     var Comparator = require_comparator();
     var debug = require_debug2();
@@ -30595,12 +30595,12 @@ var require_plugin_utils = __commonJS({
       if (display) {
         return display;
       }
-      const cache = __require.cache;
-      if (cache) {
-        const keys = Object.keys(cache);
+      const cache2 = __require.cache;
+      if (cache2) {
+        const keys = Object.keys(cache2);
         for (let i = 0; i < keys.length; i++) {
           const key = keys[i];
-          if (cache[key].exports === func) {
+          if (cache2[key].exports === func) {
             return key;
           }
         }
@@ -39206,11 +39206,11 @@ var require_lru_cache = __commonJS({
         Keys = null;
         Values = null;
       }
-      var cache = new LRUCache(Keys, Values, capacity);
+      var cache2 = new LRUCache(Keys, Values, capacity);
       forEach(iterable, function(value, key) {
-        cache.set(key, value);
+        cache2.set(key, value);
       });
-      return cache;
+      return cache2;
     };
     module.exports = LRUCache;
   }
@@ -40750,7 +40750,7 @@ var require_utils4 = __commonJS({
     var nodeCrypto2 = __require("crypto");
     module.exports = {
       postgresMd5PasswordHash,
-      randomBytes: randomBytes2,
+      randomBytes: randomBytes3,
       deriveKey,
       sha256,
       hashByName,
@@ -40760,7 +40760,7 @@ var require_utils4 = __commonJS({
     var webCrypto = nodeCrypto2.webcrypto || globalThis.crypto;
     var subtleCrypto = webCrypto.subtle;
     var textEncoder = new TextEncoder();
-    function randomBytes2(length) {
+    function randomBytes3(length) {
       return webCrypto.getRandomValues(Buffer.alloc(length));
     }
     async function md5(string) {
@@ -46825,6 +46825,32 @@ var require_jsonwebtoken = __commonJS({
   }
 });
 
+// src/boardcache.ts
+var TTL_MS = 1e3;
+var MAX_ENTRIES = 32;
+var cache = /* @__PURE__ */ new Map();
+var generation = 0;
+function boardGeneration() {
+  return generation;
+}
+function cachedBoard(key) {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.body;
+  return null;
+}
+function storeBoard(key, body, readGen) {
+  if (readGen !== generation) return;
+  if (cache.size >= MAX_ENTRIES && !cache.has(key)) {
+    const oldest = cache.keys().next().value;
+    cache.delete(oldest);
+  }
+  cache.set(key, { at: Date.now(), body });
+}
+function invalidateBoard() {
+  generation++;
+  cache.clear();
+}
+
 // src/app.ts
 var import_fastify = __toESM(require_fastify(), 1);
 var import_cors = __toESM(require_cors(), 1);
@@ -46844,11 +46870,32 @@ var errors = {
   conflict: (code, m) => new ApiError(409, code, m),
   gone: (m) => new ApiError(410, "gone", m),
   tooMany: (m = "Rate limit exceeded, slow down") => new ApiError(429, "rate_limited", m),
-  badRequest: (m) => new ApiError(400, "bad_request", m)
+  badRequest: (m) => new ApiError(400, "bad_request", m),
+  unavailable: (code, m) => new ApiError(503, code, m)
 };
 
 // src/app.ts
 init_metrics();
+
+// src/mailer.ts
+var PROVIDER = process.env.MAIL_PROVIDER ?? (process.env.VERCEL || process.env.NODE_ENV === "production" ? "none" : "log");
+var mailConfigured = PROVIDER !== "none";
+var outbox = [];
+var MAX_OUTBOX = 64;
+async function sendAuthMail(to, kind, url) {
+  if (PROVIDER === "none") {
+    console.log(`[mailer:none] ${kind} mail dropped - no provider configured`);
+    return;
+  }
+  if (outbox.length >= MAX_OUTBOX) outbox.shift();
+  outbox.push({ to, kind, url, at: Date.now() });
+  console.log(`[mailer:log] ${kind} -> ${to} (full URL in dev outbox only)`);
+}
+function authMailUrl(kind, token) {
+  const origin = process.env.APP_ORIGIN ?? "http://localhost:5173";
+  const path = kind === "verify" ? "/verify" : "/reset";
+  return `${origin}${path}?token=${token}`;
+}
 
 // ../../node_modules/zod/v3/external.js
 var external_exports = {};
@@ -52671,19 +52718,20 @@ async function rateLimit(key, limit, windowSeconds = 60) {
 
 // src/auth.ts
 var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
+import { createHash, randomBytes as randomBytes2 } from "node:crypto";
 var secret = () => {
   const s = process.env.JWT_SECRET;
   if (!s) throw new Error("JWT_SECRET is not set");
   return s;
 };
-function signToken(userId, expiresIn = "7d") {
-  return import_jsonwebtoken.default.sign({ sub: userId, iss: "teamform-api" }, secret(), { expiresIn });
+function signToken(userId, sid, expiresIn = "15m") {
+  return import_jsonwebtoken.default.sign({ sub: userId, iss: "teamform-api", ...sid ? { sid } : {} }, secret(), { expiresIn });
 }
 function verifyToken(token) {
   try {
     const payload = import_jsonwebtoken.default.verify(token, secret(), { issuer: "teamform-api" });
     if (!payload.sub) throw new Error("no sub");
-    return payload.sub;
+    return { userId: payload.sub, sid: typeof payload.sid === "string" ? payload.sid : void 0 };
   } catch {
     throw errors.unauthorized();
   }
@@ -52691,7 +52739,153 @@ function verifyToken(token) {
 async function authenticate(req, _reply) {
   const header = req.headers["authorization"];
   if (!header?.startsWith("Bearer ")) throw errors.unauthorized();
-  req.userId = verifyToken(header.slice(7));
+  const v = verifyToken(header.slice(7));
+  req.userId = v.userId;
+  req.sessionId = v.sid;
+}
+var hashToken = (t) => createHash("sha256").update(t).digest("hex");
+async function issueRefreshToken(userId, familyId) {
+  const token = randomBytes2(32).toString("hex");
+  const { rows } = await pool.query(
+    `INSERT INTO auth_refresh_tokens (user_id, token_hash, expires_at, family_id)
+     VALUES ($1, $2, now() + interval '30 days', COALESCE($3::uuid, gen_random_uuid())) RETURNING id, family_id`,
+    [userId, hashToken(token), familyId ?? null]
+  );
+  return { token, id: rows[0].id, familyId: rows[0].family_id };
+}
+async function isSessionValid(sid) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM auth_refresh_tokens
+     WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL AND expires_at > now() LIMIT 1`,
+    [sid]
+  );
+  return rows.length > 0;
+}
+async function revokeAllRefreshTokens(userId) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const fams = await client.query(
+      `SELECT DISTINCT COALESCE(family_id, id) AS fam FROM auth_refresh_tokens WHERE user_id = $1`,
+      [userId]
+    );
+    for (const { fam } of fams.rows) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text))", [fam]);
+    }
+    await client.query(
+      `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`,
+      [userId]
+    );
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {
+    });
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+async function revokeRefreshToken(token) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT COALESCE(family_id, id) AS fam FROM auth_refresh_tokens WHERE token_hash = $1`,
+      [hashToken(token)]
+    );
+    if (rows.length) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text))", [rows[0].fam]);
+      await client.query(
+        `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
+        [rows[0].fam]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {
+    });
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+var graceMs = () => Number(process.env.REFRESH_GRACE_MS ?? 1e4);
+async function rotateRefreshToken(oldToken) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT id, user_id, revoked_at, rotated_at, expires_at, COALESCE(family_id, id) AS family_id
+       FROM auth_refresh_tokens WHERE token_hash = $1`,
+      [hashToken(oldToken)]
+    );
+    if (!rows.length) {
+      await client.query("ROLLBACK");
+      throw errors.unauthorized();
+    }
+    const familyId = rows[0].family_id;
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text))", [familyId]);
+    const { rows: cur } = await client.query(
+      `SELECT id, user_id, revoked_at, rotated_at, expires_at FROM auth_refresh_tokens WHERE id = $1`,
+      [rows[0].id]
+    );
+    const row = cur[0];
+    const mintInFamily = async () => {
+      const token = randomBytes2(32).toString("hex");
+      const ins = await client.query(
+        `INSERT INTO auth_refresh_tokens (user_id, token_hash, expires_at, family_id)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [row.user_id, hashToken(token), row.expires_at, familyId]
+      );
+      return { token, id: ins.rows[0].id };
+    };
+    if (row.revoked_at) {
+      if (row.rotated_at && Date.now() - new Date(row.rotated_at).getTime() <= graceMs()) {
+        const next2 = await mintInFamily();
+        await client.query("COMMIT");
+        return { userId: row.user_id, token: next2.token, id: next2.id, familyId };
+      }
+      await client.query(
+        `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
+        [familyId]
+      );
+      await client.query("COMMIT");
+      throw errors.unauthorized();
+    }
+    if (new Date(row.expires_at).getTime() <= Date.now()) {
+      await client.query("ROLLBACK");
+      throw errors.unauthorized();
+    }
+    await client.query(`UPDATE auth_refresh_tokens SET revoked_at = now(), rotated_at = now() WHERE id = $1`, [row.id]);
+    const next = await mintInFamily();
+    await client.query("COMMIT");
+    return { userId: row.user_id, token: next.token, id: next.id, familyId };
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {
+    });
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+async function issueActionToken(userId, kind) {
+  const token = randomBytes2(24).toString("hex");
+  const ttl = kind === "reset" ? "30 minutes" : "7 days";
+  await pool.query(
+    `INSERT INTO auth_action_tokens (user_id, kind, token_hash, expires_at)
+     VALUES ($1, $2, $3, now() + $4::interval)`,
+    [userId, kind, hashToken(token), ttl]
+  );
+  return token;
+}
+async function consumeActionToken(token, kind) {
+  const { rows } = await pool.query(
+    `UPDATE auth_action_tokens SET used_at = now()
+     WHERE token_hash = $1 AND kind = $2 AND used_at IS NULL AND expires_at > now()
+     RETURNING user_id`,
+    [hashToken(token), kind]
+  );
+  return rows[0]?.user_id ?? null;
 }
 
 // src/util.ts
@@ -52717,6 +52911,10 @@ var profileSchema = external_exports.object({
   utc_offset_minutes: external_exports.number().int().min(-840).max(840).default(0),
   looking_for_team: external_exports.boolean().default(true)
 });
+var credSchema = external_exports.object({
+  email: external_exports.string().trim().email().max(254),
+  password: external_exports.string().min(8).max(128)
+});
 async function authRoutes(app2) {
   if (process.env.ALLOW_DEV_LOGIN === "true") {
     app2.post("/api/auth/dev-login", async (req) => {
@@ -52730,10 +52928,6 @@ async function authRoutes(app2) {
       return { token: signToken(id), user_id: id };
     });
   }
-  const credSchema = external_exports.object({
-    email: external_exports.string().trim().email().max(254),
-    password: external_exports.string().min(8).max(128)
-  });
   app2.post("/api/auth/signup", async (req) => {
     const body = parse(credSchema.extend({ display_name: external_exports.string().trim().min(1).max(80) }), req.body);
     await rateLimit(`auth:${req.ip}`, 10, 60);
@@ -52748,7 +52942,10 @@ async function authRoutes(app2) {
       if (e?.code === "23505") throw errors.conflict("email_taken", "An account with this email already exists");
       throw e;
     }
-    return { token: signToken(id), user_id: id };
+    const verifyToken2 = await issueActionToken(id, "verify");
+    await sendAuthMail(body.email.toLowerCase(), "verify", authMailUrl("verify", verifyToken2));
+    const session = await issueRefreshToken(id);
+    return { token: signToken(id, session.familyId), refresh_token: session.token, user_id: id };
   });
   app2.post("/api/auth/login", async (req) => {
     const body = parse(credSchema, req.body);
@@ -52760,11 +52957,67 @@ async function authRoutes(app2) {
     if (!rows.length || !await bcryptjs_default.compare(body.password, rows[0].password_hash)) {
       throw errors.unauthorized();
     }
-    return { token: signToken(rows[0].id), user_id: rows[0].id };
+    const session = await issueRefreshToken(rows[0].id);
+    return { token: signToken(rows[0].id, session.familyId), refresh_token: session.token, user_id: rows[0].id };
+  });
+  app2.post("/api/auth/refresh", async (req) => {
+    const body = parse(external_exports.object({ refresh_token: external_exports.string().min(1).max(128) }), req.body);
+    await rateLimit(`auth:${req.ip}`, 30, 60);
+    const { userId, token, familyId } = await rotateRefreshToken(body.refresh_token);
+    return { token: signToken(userId, familyId), refresh_token: token, user_id: userId };
+  });
+  app2.post("/api/auth/logout", async (req) => {
+    const body = parse(external_exports.object({ refresh_token: external_exports.string().min(1).max(128) }), req.body);
+    await rateLimit(`auth:${req.ip}`, 30, 60);
+    await revokeRefreshToken(body.refresh_token);
+    return { ok: true };
+  });
+  app2.post("/api/auth/forgot-password", async (req) => {
+    const body = parse(external_exports.object({ email: external_exports.string().trim().email().max(254) }), req.body);
+    await rateLimit(`forgot:${req.ip}`, 5, 60);
+    if (!mailConfigured) throw errors.unavailable("email_not_configured", "Email delivery is not configured on this deployment");
+    const { rows } = await pool.query(
+      `SELECT id, email FROM profiles WHERE lower(email) = lower($1) AND password_hash IS NOT NULL`,
+      [body.email]
+    );
+    if (rows.length) {
+      const token = await issueActionToken(rows[0].id, "reset");
+      await sendAuthMail(rows[0].email, "reset", authMailUrl("reset", token));
+    }
+    return { ok: true };
+  });
+  app2.post("/api/auth/reset-password", async (req) => {
+    const body = parse(external_exports.object({ token: external_exports.string().min(1).max(128), password: external_exports.string().min(8).max(128) }), req.body);
+    await rateLimit(`reset:${req.ip}`, 10, 60);
+    const userId = await consumeActionToken(body.token, "reset");
+    if (!userId) throw errors.unauthorized();
+    const password_hash = await bcryptjs_default.hash(body.password, 10);
+    await pool.query(`UPDATE profiles SET password_hash = $2 WHERE id = $1`, [userId, password_hash]);
+    await revokeAllRefreshTokens(userId);
+    return { ok: true };
+  });
+  app2.post("/api/auth/verify-email", async (req) => {
+    const body = parse(external_exports.object({ token: external_exports.string().min(1).max(128) }), req.body);
+    await rateLimit(`verify:${req.ip}`, 10, 60);
+    const userId = await consumeActionToken(body.token, "verify");
+    if (!userId) throw errors.unauthorized();
+    await pool.query(`UPDATE profiles SET email_verified_at = now() WHERE id = $1`, [userId]);
+    return { ok: true };
+  });
+  app2.post("/api/auth/resend-verification", { preHandler: authenticate }, async (req) => {
+    await rateLimit(`verify:${req.userId}`, 3, 60);
+    if (!mailConfigured) throw errors.unavailable("email_not_configured", "Email delivery is not configured on this deployment");
+    const { rows } = await pool.query(`SELECT email, email_verified_at FROM profiles WHERE id = $1`, [req.userId]);
+    if (!rows[0]?.email) throw errors.conflict("no_email", "This account has no email address");
+    if (rows[0].email_verified_at) return { ok: true, already_verified: true };
+    const token = await issueActionToken(req.userId, "verify");
+    await sendAuthMail(rows[0].email, "verify", authMailUrl("verify", token));
+    return { ok: true };
   });
   app2.get("/api/me", { preHandler: authenticate }, async (req) => {
     const { rows } = await pool.query(
-      `SELECT id, display_name, skills, timezone, utc_offset_minutes, looking_for_team, email, created_at, last_active_at
+      `SELECT id, display_name, skills, timezone, utc_offset_minutes, looking_for_team, email,
+              created_at, last_active_at, (email_verified_at IS NOT NULL) AS email_verified
        FROM profiles WHERE id = $1`,
       [req.userId]
     );
@@ -52773,6 +53026,7 @@ async function authRoutes(app2) {
   });
   app2.put("/api/me", { preHandler: authenticate }, async (req) => {
     const body = parse(profileSchema, req.body);
+    await rateLimit(`profile:${req.userId}`, 20, 60);
     const { rows } = await pool.query(
       `INSERT INTO profiles (id, display_name, skills, timezone, utc_offset_minutes, looking_for_team, last_active_at)
        VALUES ($1, $2, $3, $4, $5, $6, now())
@@ -52968,6 +53222,7 @@ async function teamRoutes(app2) {
     };
   });
   app2.post("/api/teams/:id/requests", { preHandler: authenticate }, idempotent("create_join_request", async (req) => {
+    await rateLimit(`join_request:${req.userId}`, 10, 60);
     const body = parse(joinRequestSchema, req.body);
     const teamId = req.params.id;
     return withTx(async (c) => {
@@ -52990,6 +53245,7 @@ async function teamRoutes(app2) {
     });
   }));
   app2.post("/api/requests/:id/accept", { preHandler: authenticate }, respond(async (req) => {
+    await rateLimit(`moderate:${req.userId}`, 30, 60);
     return withTx(async (c) => {
       const { rows } = await c.query(
         `SELECT jr.*, t.leader_id, h.team_size_max FROM join_requests jr
@@ -53016,6 +53272,7 @@ async function teamRoutes(app2) {
     });
   }));
   app2.post("/api/requests/:id/decline", { preHandler: authenticate }, respond(async (req) => {
+    await rateLimit(`moderate:${req.userId}`, 30, 60);
     return withTx(async (c) => {
       const { rows } = await c.query(
         `SELECT jr.*, t.leader_id FROM join_requests jr JOIN teams t ON t.id = jr.team_id WHERE jr.id = $1 FOR UPDATE OF jr`,
@@ -53031,6 +53288,7 @@ async function teamRoutes(app2) {
     });
   }));
   app2.post("/api/teams/:id/leave", { preHandler: authenticate }, respond(async (req) => {
+    await rateLimit(`leave:${req.userId}`, 10, 60);
     return withTx(async (c) => {
       const { rows } = await c.query(`SELECT * FROM teams WHERE id = $1 FOR UPDATE`, [req.params.id]);
       const team = rows[0];
@@ -53055,6 +53313,7 @@ async function teamRoutes(app2) {
     });
   }));
   app2.delete("/api/teams/:id/members/:userId", { preHandler: authenticate }, respond(async (req) => {
+    await rateLimit(`moderate:${req.userId}`, 30, 60);
     return withTx(async (c) => {
       const { rows } = await c.query(`SELECT * FROM teams WHERE id = $1 FOR UPDATE`, [req.params.id]);
       const team = rows[0];
@@ -53067,7 +53326,7 @@ async function teamRoutes(app2) {
       return { status: 200, body: { ok: true } };
     });
   }));
-  app2.post("/api/teams/:id/invite/rotate", { preHandler: authenticate }, respond(async (req) => {
+  app2.post("/api/teams/:id/invite/rotate", { preHandler: authenticate }, idempotent("rotate_invite", async (req) => {
     return withTx(async (c) => {
       const { rows } = await c.query(
         `SELECT t.*, h.invite_code_ttl_minutes FROM teams t JOIN hackathons h ON h.id = t.hackathon_id WHERE t.id = $1 FOR UPDATE`,
@@ -53102,40 +53361,75 @@ async function teamRoutes(app2) {
 }
 
 // src/routes/board.ts
+function parseCursor(raw) {
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const [ts, id] = Buffer.from(raw, "base64url").toString("utf8").split("|");
+    if (!ts || !id || Number.isNaN(Date.parse(ts))) return null;
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+    return { ts, id };
+  } catch {
+    return null;
+  }
+}
+var encCursor = (ts, id) => Buffer.from(`${new Date(ts).toISOString()}|${id}`).toString("base64url");
 async function boardRoutes(app2) {
   app2.get("/api/board", { preHandler: authenticate }, async (req) => {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
-    const teams = await pool.query(
-      `SELECT t.id, t.name, t.wanted_skills, t.created_at,
-              h.team_size_min, h.team_size_max,
-              count(tm.user_id)::int AS member_count,
-              (count(tm.user_id) >= h.team_size_min) AS is_complete,
+    const tc = parseCursor(req.query?.teams_cursor);
+    const pc = parseCursor(req.query?.people_cursor);
+    const cacheKey = `${limit}|${req.query?.teams_cursor ?? ""}|${req.query?.people_cursor ?? ""}`;
+    const hit = cachedBoard(cacheKey);
+    if (hit) return hit;
+    const readGen = boardGeneration();
+    const teams = pool.query(
+      `WITH page AS (
+         SELECT t.id, t.name, t.wanted_skills, t.created_at, t.leader_id, t.member_count,
+                h.team_size_min, h.team_size_max
+         FROM teams t
+         JOIN hackathons h ON h.id = t.hackathon_id
+         WHERE t.looking_for_members
+           AND t.member_count < h.team_size_max
+           AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2::timestamptz, $3::uuid))
+         ORDER BY t.created_at DESC, t.id DESC
+         LIMIT $1
+       )
+       SELECT page.id, page.name, page.wanted_skills, page.created_at,
+              page.team_size_min, page.team_size_max, page.member_count,
+              (page.member_count >= page.team_size_min) AS is_complete,
               p.display_name AS leader_name
-       FROM teams t
-       JOIN hackathons h ON h.id = t.hackathon_id
-       JOIN team_members tm ON tm.team_id = t.id
-       JOIN profiles p ON p.id = t.leader_id
-       WHERE t.looking_for_members
-       GROUP BY t.id, h.team_size_min, h.team_size_max, p.display_name
-       HAVING count(tm.user_id) < h.team_size_max
-       ORDER BY t.created_at DESC
-       LIMIT $1`,
-      [limit]
+       FROM page
+       JOIN profiles p ON p.id = page.leader_id
+       ORDER BY page.created_at DESC, page.id DESC`,
+      [limit, tc?.ts ?? null, tc?.id ?? null]
     );
-    const people = await pool.query(
-      `SELECT p.id, p.display_name, p.skills, p.timezone
+    const people = pool.query(
+      `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
        FROM profiles p
        WHERE p.looking_for_team
          AND NOT EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = p.id)
-       ORDER BY p.last_active_at DESC
+         AND ($2::timestamptz IS NULL OR (p.last_active_at, p.id) < ($2::timestamptz, $3::uuid))
+       ORDER BY p.last_active_at DESC, p.id DESC
        LIMIT $1`,
-      [limit]
+      [limit, pc?.ts ?? null, pc?.id ?? null]
     );
-    return { teams: teams.rows, people: people.rows, generated_at: (/* @__PURE__ */ new Date()).toISOString() };
+    const [teamsR, peopleR] = await Promise.all([teams, people]);
+    const lastT = teamsR.rows[teamsR.rows.length - 1];
+    const lastP = peopleR.rows[peopleR.rows.length - 1];
+    const body = {
+      teams: teamsR.rows,
+      // last_active_at is selected for cursor encoding only - never exposed.
+      people: peopleR.rows.map(({ last_active_at, ...rest }) => rest),
+      next_teams_cursor: teamsR.rows.length === limit && lastT ? encCursor(lastT.created_at, lastT.id) : null,
+      next_people_cursor: peopleR.rows.length === limit && lastP ? encCursor(lastP.last_active_at, lastP.id) : null,
+      generated_at: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    storeBoard(cacheKey, body, readGen);
+    return body;
   });
   app2.get("/api/health", async () => {
     await pool.query("SELECT 1");
-    return { ok: true };
+    return { ok: true, commit: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.COMMIT_SHA ?? null };
   });
   app2.get("/api/metrics", async () => {
     const { snapshot: snapshot2 } = await Promise.resolve().then(() => (init_metrics(), metrics_exports));
@@ -53146,6 +53440,7 @@ async function boardRoutes(app2) {
 // src/routes/suggestions.ts
 async function suggestionRoutes(app2) {
   app2.get("/api/suggestions", { preHandler: authenticate }, async (req) => {
+    await rateLimit(`suggest:${req.userId}`, 30, 60);
     const { rows } = await pool.query(
       `WITH me AS (SELECT skills, utc_offset_minutes FROM profiles WHERE id = $1),
             scored AS (
@@ -53188,20 +53483,27 @@ async function eventRoutes(app2) {
     if (leader) leaderCache.set(teamId, { leader, at: Date.now() });
     return leader;
   }
-  function sseHead(reply) {
+  function sseHead(req, reply) {
     reply.hijack();
-    reply.raw.writeHead(200, {
+    const headers = {
       "content-type": "text/event-stream",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
       "x-accel-buffering": "no"
-    });
+    };
+    const origin = req.headers.origin;
+    const allowed = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(",") : null;
+    if (origin && (!allowed || allowed.includes(origin))) {
+      headers["access-control-allow-origin"] = origin;
+      headers.vary = "Origin";
+    }
+    reply.raw.writeHead(200, headers);
   }
   if (MODE === "listen") {
     app2.get("/api/events", { preHandler: authenticate }, async (req, reply) => {
       const userId = req.userId;
       await rateLimit(`sse:${userId}`, 20, 60);
-      sseHead(reply);
+      sseHead(req, reply);
       reply.raw.write(`event: sync
 data: {"reason":"connected"}
 
@@ -53228,9 +53530,24 @@ data: ${msg.payload}
         });
       };
       client.on("notification", onNotify);
-      const heartbeat = setInterval(() => reply.raw.write(`: hb
+      const heartbeat = setInterval(() => {
+        void (async () => {
+          if (req.sessionId && !await isSessionValid(req.sessionId)) {
+            try {
+              reply.raw.write(`event: sync
+data: {"reason":"session_revoked"}
 
-`), 25e3);
+`);
+              reply.raw.end();
+            } catch {
+            }
+            return;
+          }
+          reply.raw.write(`: hb
+
+`);
+        })();
+      }, 25e3);
       req.raw.on("close", () => {
         clearInterval(heartbeat);
         client.off("notification", onNotify);
@@ -53248,6 +53565,29 @@ data: ${msg.payload}
     ticking = true;
     try {
       tickCount += 1;
+      const sids = [...new Set([...clients].filter((c) => !c.closed && c.sessionId).map((c) => c.sessionId))];
+      if (sids.length) {
+        const { rows: validRows } = await pool.query(
+          `SELECT DISTINCT COALESCE(family_id, id) AS family_id FROM auth_refresh_tokens
+           WHERE COALESCE(family_id, id) = ANY($1::uuid[]) AND revoked_at IS NULL AND expires_at > now()`,
+          [sids]
+        );
+        const valid = new Set(validRows.map((r) => r.family_id));
+        for (const c of [...clients]) {
+          if (c.closed || !c.sessionId || valid.has(c.sessionId)) continue;
+          try {
+            c.reply.raw.write(`event: sync
+data: {"reason":"session_revoked"}
+
+`);
+            c.reply.raw.end();
+          } catch {
+          }
+          c.closed = true;
+          clients.delete(c);
+        }
+        if (clients.size === 0) return;
+      }
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -53325,7 +53665,7 @@ data: ${payload}
   app2.get("/api/events", { preHandler: authenticate }, async (req, reply) => {
     const userId = req.userId;
     await rateLimit(`sse:${userId}`, 20, 60);
-    sseHead(reply);
+    sseHead(req, reply);
     const { rows: tail } = await pool.query(
       `SELECT max(dispatched_seq) AS hi, min(dispatched_seq) AS lo FROM domain_events WHERE dispatched_seq IS NOT NULL`
     );
@@ -53349,7 +53689,7 @@ data: {"reason":"connected"}
 
 `);
     }
-    const state = { userId, reply, cursor, closed: false };
+    const state = { userId, sessionId: req.sessionId, reply, cursor, closed: false };
     clients.add(state);
     const rotate = setTimeout(() => {
       if (state.closed) return;
@@ -53382,6 +53722,12 @@ function buildApp(opts = {}) {
   app2.register(import_cors.default, { origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(",") : true });
   app2.addHook("onResponse", async (req, reply) => {
     record(req.routeOptions?.url ?? req.url, reply.statusCode, reply.elapsedTime);
+  });
+  app2.addHook("onSend", (req, reply, payload, done) => {
+    if (req.method !== "GET" && reply.statusCode < 300 && /^\/api\/(teams|requests|me)(\/|$)/.test(req.url)) {
+      invalidateBoard();
+    }
+    done();
   });
   app2.setErrorHandler((err, req, reply) => {
     if (err instanceof ApiError) {

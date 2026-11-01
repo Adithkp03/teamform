@@ -23,5 +23,9 @@ jobs:
       - run: npm ci
       - name: Run API tests (incl. 50-way race, idempotency, authz)
         run: npm run test -w @teamform/api
+      - name: Serverless bundle is in sync with src (Vercel deploys the bundle)
+        run: |
+          npm run bundle -w @teamform/api
+          git diff --exit-code --stat apps/api/api/index.mjs
       - name: Build web
         run: npm run build -w @teamform/web
