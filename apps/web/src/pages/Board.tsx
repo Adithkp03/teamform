@@ -102,10 +102,10 @@ export default function Board() {
 
       <div role="tablist" aria-label="Board views" className="flex gap-2">
         <button role="tab" aria-selected={tab === 'teams'} className={tab === 'teams' ? 'btn-primary' : 'btn-ghost'} onClick={() => setTab('teams')}>
-          Teams looking ({board?.teams.length ?? '...'})
+          Teams looking ({board ? `${board.teams.length}${board.next_teams_cursor ? '+' : ''}` : '...'})
         </button>
         <button role="tab" aria-selected={tab === 'people'} className={tab === 'people' ? 'btn-primary' : 'btn-ghost'} onClick={() => setTab('people')}>
-          People looking ({board?.people.length ?? '...'})
+          People looking ({board ? `${board.people.length}${board.next_people_cursor ? '+' : ''}` : '...'})
         </button>
       </div>
 
