@@ -11,7 +11,7 @@ import eventRoutes from './routes/events.js';
 export function buildApp(opts: { logger?: boolean } = {}) {
   const app = Fastify({ logger: opts.logger ?? false });
 
-  app.register(cors, { origin: true });
+  app.register(cors, { origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : true });
 
   app.addHook('onResponse', async (req, reply) => {
     record(req.routeOptions?.url ?? req.url, reply.statusCode, reply.elapsedTime);

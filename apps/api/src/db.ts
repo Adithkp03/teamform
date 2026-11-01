@@ -2,8 +2,13 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
+const dbUrl = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/teamform';
+// Managed Postgres (Neon) requires TLS; local/Docker Postgres does not serve it.
+const useSsl = /neon\.tech|sslmode=require/.test(dbUrl);
+
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/teamform',
+  connectionString: dbUrl,
+  ...(useSsl ? { ssl: { rejectUnauthorized: false } } : {}),
   // Small pool per serverless instance; Postgres stays the contention point by design.
   max: Number(process.env.PG_POOL_MAX || 5),
   idleTimeoutMillis: 10_000,
