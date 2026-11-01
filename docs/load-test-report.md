@@ -70,7 +70,7 @@ Target from the problem statement: **p95 < 200 ms with 100 concurrent users.**
   running create/join/leave cycles within the app's own rate limits
   (5 creates/min/user; an unpaced variant tripped 429s by design with
   zero 5xx, so the committed workload paces below the limit). Local,
-  full seed: read p95 46.64ms, 472,282/472,282 checks - including
+  full seed: read p95 46.29ms, 465,244/465,244 checks - including
   field-level read-your-write (team id/name/member_count verified after
   create, join and leave) - 0.00% failed. The field-level checks caught
   a real race: invalidation ran in an onResponse hook, which fires after

@@ -59,6 +59,15 @@ export function setup() {
 // mutator VU pins itself to one pair so concurrent VUs never share users.
 const PAIR_IDX = __VU >= 100 ? (__VU - 100) % 4 : 0;
 
+// Log the first mutation failure per VU (status + body) so the CI job log
+// records the failure class instead of a bare check count.
+let failureLogged = false;
+const logFailure = (what, r) => {
+  if (failureLogged) return;
+  failureLogged = true;
+  console.log(`mutator VU ${__VU}: ${what} failed: status=${r.status} body=${String(r.body).slice(0, 200)}`);
+};
+
 const bearer = (t) => ({ authorization: `Bearer ${t}` });
 const json = (t) => ({ ...bearer(t), 'content-type': 'application/json' });
 
@@ -82,7 +91,14 @@ export function mutate(data) {
     JSON.stringify({ name: `Mix ${Date.now()}`, looking_for_members: true, wanted_skills: ['k6'] }),
     { headers: { ...json(data.leader), 'idempotency-key': `mix-${__VU}-${__ITER}` }, tags: { name: 'POST /api/teams' } },
   );
-  if (!check(created, { 'create 201': (r) => r.status === 201 })) return;
+  // Pace failures too: an early return without sleep hot-loops retries
+  // inside the same fixed rate-limit window, which is how one transient
+  // failure used to turn into thousands of expected 429s (run #20).
+  if (!check(created, { 'create 201': (r) => r.status === 201 })) {
+    logFailure('create', created);
+    sleep(15);
+    return;
+  }
   const team = created.json('team');
 
   // Field-level read-your-write: the created team appears with its actual
@@ -101,7 +117,13 @@ export function mutate(data) {
     JSON.stringify({ code: team.invite_code }),
     { headers: { ...json(data.joiner), 'idempotency-key': `mixj-${__VU}-${__ITER}` }, tags: { name: 'POST /join-by-code' } },
   );
-  if (!check(joined, { 'join 201': (r) => r.status === 201 })) return;
+  if (!check(joined, { 'join 201': (r) => r.status === 201 })) {
+    logFailure('join', joined);
+    // Cleanup so the leader is not stuck already_in_team on the next cycle.
+    http.post(`${BASE}/api/teams/${team.id}/leave`, null, { headers: bearer(data.leader), tags: { name: 'POST /leave' } });
+    sleep(15);
+    return;
+  }
 
   const board2 = http.get(`${BASE}/api/board`, { headers: bearer(data.leader), tags: { name: 'GET /api/board' } });
   check(board2, {
@@ -112,7 +134,12 @@ export function mutate(data) {
   });
 
   const leaveJ = http.post(`${BASE}/api/teams/${team.id}/leave`, null, { headers: bearer(data.joiner), tags: { name: 'POST /leave' } });
-  if (!check(leaveJ, { 'joiner leave 200': (r) => r.status === 200 })) return;
+  if (!check(leaveJ, { 'joiner leave 200': (r) => r.status === 200 })) {
+    logFailure('joiner leave', leaveJ);
+    http.post(`${BASE}/api/teams/${team.id}/leave`, null, { headers: bearer(data.leader), tags: { name: 'POST /leave' } });
+    sleep(15);
+    return;
+  }
 
   const board3 = http.get(`${BASE}/api/board`, { headers: bearer(data.leader), tags: { name: 'GET /api/board' } });
   check(board3, {
@@ -125,5 +152,7 @@ export function mutate(data) {
   const leaveL = http.post(`${BASE}/api/teams/${team.id}/leave`, null, { headers: bearer(data.leader), tags: { name: 'POST /leave' } });
   check(leaveL, { 'leader leave 200': (r) => r.status === 200 });
 
-  sleep(13); // stay under the 5 creates/min per-user rate limit
+  // ~17s hosted cycle => ~3.5 creates/min per user, below the 5/min limit
+  // with margin for fixed-window boundary drift.
+  sleep(15);
 }
