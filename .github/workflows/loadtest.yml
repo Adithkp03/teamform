@@ -1,15 +1,42 @@
-name: Load test (live URL)
+name: Load test (guarded)
 on:
   workflow_dispatch:
     inputs:
       target_url:
-        description: 'Base URL of the deployed app (e.g. https://teamform.vercel.app)'
+        description: 'Base URL to test. Local/CI targets only unless you hold written load-testing permission for the host.'
         required: true
+        default: 'http://localhost:3000'
       seed_token:
-        description: 'A valid JWT for a seed user (from dev-login or Supabase)'
+        description: 'A valid JWT for a test user on the target environment'
         required: true
+      external_permission:
+        description: 'Type CONFIRMED only if the target host terms permit this load test. Vercel plans below Enterprise forbid it: https://vercel.com/kb/guide/what-s-vercel-s-policy-regarding-load-testing-deployments'
+        required: true
+        default: 'local-only'
 jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject prohibited or unconfirmed targets
+        run: |
+          TARGET="${{ inputs.target_url }}"
+          case "$TARGET" in
+            *vercel.app*|*.vercel.app*|*vercel-dns.com*)
+              echo "::error::Vercel forbids load testing below Enterprise plans. Aborting."
+              exit 1 ;;
+          esac
+          case "$TARGET" in
+            http://localhost*|http://127.0.0.1*|https://localhost*|https://127.0.0.1*)
+              echo "Local target: permitted." ;;
+            *)
+              if [ "${{ inputs.external_permission }}" != "CONFIRMED" ]; then
+                echo "::error::External target requires typing CONFIRMED after verifying the host permits load testing."
+                exit 1
+              fi
+              echo "External target with operator-confirmed permission." ;;
+          esac
   k6:
+    needs: guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
