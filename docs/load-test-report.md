@@ -21,20 +21,40 @@ Target from the problem statement: **p95 < 200 ms with 100 concurrent users.**
   seed (139 ms local vs 378 ms CI); the cause is an unproven environment
   hypothesis (runner CPU class), not investigated further because the local
   reproduction is the repeatable standard and production load testing is
-  not permitted. **Tooling finding:** on the hosted runner the k6 step exited 0 even
-  though its threshold was tainted - verified in run #11's job log, where
-  the k6 step shows no failure while the summary JSON records
-  `thresholds["p(95)<200"] = true` and `k6-output.txt` shows
-  `X 'p(95)<200' p(95)=378.04ms`. This contradicts k6's documented exit
-  code 99 (ThresholdsHaveFailed, errext/exitcodes/codes.go); the exact
-  cause (installed k6 version, the setup-k6-action wrapper, or runner
-  shell behavior) is NOT attributed. So runs #5-#10 showed green while
-  #10 had actually violated p(95)<200. The workflow now has an explicit
-  gate step that fails the job on any tainted threshold - expect the next
-  hosted run to go red honestly until the runner meets 200 ms. Run #6's
+  not permitted. **Tooling finding (resolved):** runs #5-#11 showed green even when the
+  threshold was tainted (#10's artifact records `X 'p(95)<200'
+  p(95)=378.04ms` and `thresholds["p(95)<200"] = true`). The cause is now
+  attributed: the k6 step piped through `tee` without `set -o pipefail`,
+  so the step's exit status came from `tee` (0) and masked k6's own exit
+  code. Hosted k6 exits 99 on crossed thresholds exactly like local
+  v0.55 - proven in run #13's job log ("thresholds on metrics
+  'http_req_duration' have been crossed", "Process completed with exit
+  code 99") once `pipefail` was set. The earlier wording blaming an
+  unattributed hosted-k6 exit behavior is retracted. The workflow now
+  has both `set -o pipefail` and an explicit gate step that reads the
+  exported summary JSON and fails the job on any tainted threshold, so
+  hosted runs go red honestly until the runner meets 200 ms. Run #6's
   earlier failure was separately explained from its job log: a genuine
   SSE storm-test flake (read loop stopped at 10 ids), fixed in `7531164`
   and confirmed green in CI #38.
+- **Hosted-runner bottleneck: measured, no longer a hypothesis.** Run #14
+  (`61d22b7`, p95=375.4 ms, 18,012 reqs, 0 failed) carried a per-process
+  CPU sampler during the k6 step, printed to the job log and persisted in
+  the artifact as `ci-profile.txt`. Samples during the run:
+  `postgres=122-127%`, `node=47-50%`, `k6=11%` - the hosted run is
+  Postgres-CPU-bound. Local EXPLAIN (ANALYZE, BUFFERS) on the full seed
+  shows both board queries already near-optimal (teams page: 1.04 ms,
+  163 buffers, top-N heapsort; people page: 0.28 ms, index-only anti
+  join via `profiles_board_idx`), so more indexing is not the lever.
+- **Cache experiment (local, uncommitted, reverted):** a 500 ms
+  in-process cache of the board response cut Postgres to 11-12% CPU and
+  p95 to 31.55 ms (272,424 iters vs ~48k uncached; node becomes the
+  bottleneck at 56-70%, k6 at 52%). Scaled by the measured ~2.7x
+  hosted/local gap this projects ~85 ms on the hosted runner - under the
+  200 ms target. Caveats: the experiment had no invalidation; a real
+  implementation must invalidate on domain events (the dispatcher
+  already sees every change) and disclose up-to-TTL staleness. This is
+  the next warranted fix, chosen by the profiling above.
 - **Production measurement: not permitted by the host.** Vercel allows load
   testing only on Enterprise plans
   (<https://vercel.com/kb/guide/what-s-vercel-s-policy-regarding-load-testing-deployments>);
