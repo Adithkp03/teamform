@@ -1,7 +1,8 @@
 import { describe, test, expect, beforeAll, beforeEach } from 'vitest';
 import { app, migrate, resetDb, makeUser, auth, createTeam } from './helpers.js';
 import { pool } from '../src/db.js';
-import { boardCacheSize, invalidateBoard, BOARD_CACHE_TTL_MS } from '../src/boardcache.js';
+import { boardCacheSize, invalidateBoard, boardGeneration, storeBoard, BOARD_CACHE_TTL_MS } from '../src/boardcache.js';
+import { signToken } from '../src/auth.js';
 
 // The board cache is a 1s-TTL in-process cache of the PUBLIC board payload.
 // Authorization runs in the preHandler before any cache read; the payload is
@@ -97,6 +98,26 @@ describe('board cache', () => {
     await sleep(BOARD_CACHE_TTL_MS + 150);
     const after = await board(u.token);
     expect(after.json().teams.find((t: any) => t.id === team.id).name).toBe('RenamedByOtherInstance');
+  });
+
+  test('read/mutation race: a read that started before an invalidation cannot repopulate a stale snapshot', async () => {
+    const u = await makeUser('A');
+    await board(u.token); // warm
+    const genAtReadStart = boardGeneration(); // a concurrent read starts now (cache miss path)
+    invalidateBoard();                          // a mutation commits + invalidates mid-read
+    storeBoard(50, { teams: [], people: [], generated_at: 'stale-snapshot' }, genAtReadStart);
+    const r = await board(u.token);
+    expect(r.json().generated_at).not.toBe('stale-snapshot'); // stale store was dropped
+  });
+
+  test('expired token gets 401 even with a warm cache (no served payload after auth expiry)', async () => {
+    const u = await makeUser('A');
+    await createTeam(u.token, 'ExpiryTeam');
+    expect((await board(u.token)).statusCode).toBe(200); // warm
+    const expired = signToken(u.id, '0s');
+    await sleep(1100); // past exp AND past TTL so only auth can gate
+    const r = await board(expired);
+    expect(r.statusCode).toBe(401);
   });
 
   test('memory is bounded: many distinct limit values cannot grow the cache past the cap', async () => {

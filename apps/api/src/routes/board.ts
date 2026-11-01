@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db.js';
 import { authenticate } from '../auth.js';
-import { cachedBoard, storeBoard } from '../boardcache.js';
+import { cachedBoard, storeBoard, boardGeneration } from '../boardcache.js';
 
 export default async function boardRoutes(app: FastifyInstance) {
   // The "looking for teammates" board. Single indexed query per side; this is the
@@ -10,6 +10,7 @@ export default async function boardRoutes(app: FastifyInstance) {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
     const hit = cachedBoard(limit);
     if (hit) return hit;
+    const readGen = boardGeneration();
     const teams = pool.query(
       `WITH page AS (
          SELECT t.id, t.name, t.wanted_skills, t.created_at, t.leader_id, t.member_count,
@@ -41,7 +42,7 @@ export default async function boardRoutes(app: FastifyInstance) {
     );
     const [teamsR, peopleR] = await Promise.all([teams, people]);
     const body = { teams: teamsR.rows, people: peopleR.rows, generated_at: new Date().toISOString() };
-    storeBoard(limit, body);
+    storeBoard(limit, body, readGen);
     return body;
   });
 

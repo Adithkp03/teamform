@@ -20,6 +20,16 @@ const TTL_MS = 1000;
 const MAX_ENTRIES = 32;
 
 const cache = new Map<number, { at: number; body: unknown }>();
+// Generation guard for the read/mutation race: a read that MISSED may be
+// in flight while a mutation commits and invalidates. Without a version,
+// that read would repopulate the cache with the pre-mutation snapshot and
+// serve it for a full TTL. storeBoard only applies if the generation has
+// not advanced since the read started.
+let generation = 0;
+
+export function boardGeneration(): number {
+  return generation;
+}
 
 export function cachedBoard(limit: number): unknown | null {
   const hit = cache.get(limit);
@@ -27,7 +37,8 @@ export function cachedBoard(limit: number): unknown | null {
   return null;
 }
 
-export function storeBoard(limit: number, body: unknown): void {
+export function storeBoard(limit: number, body: unknown, readGen: number): void {
+  if (readGen !== generation) return; // a mutation landed while we read
   if (cache.size >= MAX_ENTRIES && !cache.has(limit)) {
     const oldest = cache.keys().next().value as number;
     cache.delete(oldest);
@@ -36,6 +47,7 @@ export function storeBoard(limit: number, body: unknown): void {
 }
 
 export function invalidateBoard(): void {
+  generation++;
   cache.clear();
 }
 
