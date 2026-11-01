@@ -98,8 +98,10 @@ for (let i = 0; i < N_TEAMS; i++) {
 }
 console.log();
 
-// A handful of friendly demo users (not marked as seed) for walkthroughs.
-for (const [name, skills] of [['Asha Verma', ['react', 'typescript', 'tailwind']], ['Rohan Iyer', ['node', 'postgres', 'redis']], ['Meera Nair', ['ml', 'python', 'data-engineering']]]) {
+// Demo fixtures for walkthroughs, clearly separated from the 10,000 synthetic
+// seed users: they are NOT counted in the seed totals and carry is_seed=false
+// with a (demo) suffix so any report can filter them out.
+for (const [name, skills] of [['Asha Verma (demo)', ['react', 'typescript', 'tailwind']], ['Rohan Iyer (demo)', ['node', 'postgres', 'redis']], ['Meera Nair (demo)', ['ml', 'python', 'data-engineering']]]) {
   await client.query(
     `INSERT INTO profiles (id, display_name, skills, timezone, utc_offset_minutes, looking_for_team, is_seed)
      VALUES ($1, $2, $3, 'Asia/Kolkata', 330, true, false) ON CONFLICT DO NOTHING`,

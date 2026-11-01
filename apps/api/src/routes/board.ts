@@ -11,6 +11,7 @@ export default async function boardRoutes(app: FastifyInstance) {
       `SELECT t.id, t.name, t.wanted_skills, t.created_at,
               h.team_size_min, h.team_size_max,
               count(tm.user_id)::int AS member_count,
+              (count(tm.user_id) >= h.team_size_min) AS is_complete,
               p.display_name AS leader_name
        FROM teams t
        JOIN hackathons h ON h.id = t.hackathon_id

@@ -322,3 +322,35 @@ describe('board, suggestions, metrics', () => {
     expect(res.json().routes['/api/board'].requests).toBeGreaterThan(0);
   });
 });
+
+describe('minimum team size semantics', () => {
+  test('a team below min size exists and is flagged incomplete, not blocked', async () => {
+    const u = await makeUser();
+    const team = (await createTeam(u.token)).json().team; // min 2, creator alone
+    const detail = await app.inject({ method: 'GET', url: `/api/teams/${team.id}`, headers: auth(u.token) });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json().member_count).toBe(1);
+    expect(detail.json().is_complete).toBe(false);
+  });
+
+  test('team becomes complete at min size; leaving below min is allowed and re-flags it', async () => {
+    const leader = await makeUser();
+    const m = await makeUser();
+    const team = (await createTeam(leader.token)).json().team;
+    await app.inject({ method: 'POST', url: '/api/teams/join-by-code', headers: { ...auth(m.token), 'idempotency-key': idemKey() }, payload: { code: team.invite_code } });
+    let detail = await app.inject({ method: 'GET', url: `/api/teams/${team.id}`, headers: auth(leader.token) });
+    expect(detail.json().is_complete).toBe(true);
+    await app.inject({ method: 'POST', url: `/api/teams/${team.id}/leave`, headers: auth(m.token) });
+    detail = await app.inject({ method: 'GET', url: `/api/teams/${team.id}`, headers: auth(leader.token) });
+    expect(detail.json().is_complete).toBe(false);
+  });
+
+  test('board rows carry the completeness flag', async () => {
+    const u = await makeUser();
+    await createTeam(u.token, 'Incomplete Team');
+    const v = await makeUser('Viewer');
+    const res = await app.inject({ method: 'GET', url: '/api/board', headers: auth(v.token) });
+    const row = res.json().teams.find((t: any) => t.name === 'Incomplete Team');
+    expect(row.is_complete).toBe(false);
+  });
+});

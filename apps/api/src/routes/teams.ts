@@ -105,7 +105,12 @@ export default async function teamRoutes(app: FastifyInstance) {
       requests = r.rows;
     }
     if (!isMember) { delete team.invite_code; delete team.invite_expires_at; }
-    return { team, members: members.rows, member_count: members.rows.length, is_member: isMember, is_leader: isLeader, pending_requests: requests };
+    return {
+      team, members: members.rows, member_count: members.rows.length,
+      // A team below team_size_min is allowed (still forming) but flagged.
+      is_complete: members.rows.length >= team.team_size_min,
+      is_member: isMember, is_leader: isLeader, pending_requests: requests,
+    };
   });
 
   // ---- Join requests ----
