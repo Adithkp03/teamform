@@ -1,0 +1,212 @@
+{
+    "metrics": {
+        "http_req_tls_handshaking": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "http_req_waiting": {
+            "avg": 23.014143967575162,
+            "min": 0.183176,
+            "med": 20.563254,
+            "max": 484.59913,
+            "p(90)": 36.2620356,
+            "p(95)": 42.41341479999999
+        },
+        "vus_max": {
+            "value": 103,
+            "min": 103,
+            "max": 103
+        },
+        "http_req_connecting": {
+            "med": 0,
+            "max": 16.065599,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0.0020346112263667586,
+            "min": 0
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 238118,
+            "thresholds": {
+                "rate<0.01": false
+            },
+            "value": 0
+        },
+        "data_received": {
+            "rate": 60151016.701599,
+            "count": 4180748888
+        },
+        "http_req_duration{name:GET /api/board}": {
+            "avg": 24.37233244264142,
+            "min": 0.193109,
+            "med": 21.7512665,
+            "max": 458.785955,
+            "p(90)": 39.1271381,
+            "p(95)": 46.37463544999999,
+            "thresholds": {
+                "p(95)<200": false
+            }
+        },
+        "http_reqs": {
+            "count": 238118,
+            "rate": 3425.9507515657688
+        },
+        "checks": {
+            "passes": 476120,
+            "fails": 0,
+            "value": 1
+        },
+        "http_req_duration": {
+            "p(95)": 46.44993884999999,
+            "avg": 24.423180009558045,
+            "min": 0.193109,
+            "med": 21.7574885,
+            "max": 484.611288,
+            "p(90)": 39.15738740000002
+        },
+        "data_sent": {
+            "rate": 1127244.323186591,
+            "count": 78348226
+        },
+        "http_req_failed{expected_response:true}": {
+            "passes": 0,
+            "fails": 238118,
+            "thresholds": {
+                "rate<0.01": false
+            },
+            "value": 0
+        },
+        "http_req_blocked": {
+            "med": 0.000791,
+            "max": 34.978071,
+            "p(90)": 0.002014,
+            "p(95)": 0.002642,
+            "avg": 0.0042572363198079815,
+            "min": 0.000496
+        },
+        "iterations": {
+            "count": 238030,
+            "rate": 3424.6846412081404
+        },
+        "http_req_duration{expected_response:true}": {
+            "min": 0.193109,
+            "med": 21.7574885,
+            "max": 484.611288,
+            "p(90)": 39.15738740000002,
+            "p(95)": 46.44993884999999,
+            "avg": 24.423180009558045
+        },
+        "http_req_receiving": {
+            "max": 93.225554,
+            "p(90)": 4.047749600000004,
+            "p(95)": 9.607404949999996,
+            "avg": 1.2761694308578322,
+            "min": 0.00575,
+            "med": 0.01095
+        },
+        "vus": {
+            "value": 4,
+            "min": 4,
+            "max": 103
+        },
+        "http_req_sending": {
+            "med": 0.002483,
+            "max": 79.74344,
+            "p(90)": 0.056791,
+            "p(95)": 0.15326574999999987,
+            "avg": 0.1328666111255776,
+            "min": 0.001663
+        },
+        "iteration_duration": {
+            "max": 14107.438476,
+            "p(90)": 39.798524400000005,
+            "p(95)": 47.1787323,
+            "avg": 26.10622647430166,
+            "min": 0.354284,
+            "med": 22.339224
+        }
+    },
+    "setup_data": {
+        "pairs": [
+            {
+                "leader": "REDACTED_LOCAL_BENCHMARK_TOKEN",
+                "joiner": "REDACTED_LOCAL_BENCHMARK_TOKEN"
+            },
+            {
+                "joiner": "REDACTED_LOCAL_BENCHMARK_TOKEN",
+                "leader": "REDACTED_LOCAL_BENCHMARK_TOKEN"
+            },
+            {
+                "joiner": "REDACTED_LOCAL_BENCHMARK_TOKEN",
+                "leader": "REDACTED_LOCAL_BENCHMARK_TOKEN"
+            },
+            {
+                "joiner": "REDACTED_LOCAL_BENCHMARK_TOKEN",
+                "leader": "REDACTED_LOCAL_BENCHMARK_TOKEN"
+            }
+        ],
+        "reader": "REDACTED_LOCAL_BENCHMARK_TOKEN"
+    },
+    "root_group": {
+        "groups": {},
+        "checks": {
+                "board 200": {
+                    "name": "board 200",
+                    "path": "::board 200",
+                    "id": "2ea6aa17694cf91669e648c2e2a3eedd",
+                    "passes": 238010,
+                    "fails": 0
+                },
+                "board has arrays": {
+                    "name": "board has arrays",
+                    "path": "::board has arrays",
+                    "id": "941cff009f6965b39595314dfdf02a88",
+                    "passes": 238010,
+                    "fails": 0
+                },
+                "create 201": {
+                    "name": "create 201",
+                    "path": "::create 201",
+                    "id": "156654209db568811cc0f7da2d599478",
+                    "passes": 20,
+                    "fails": 0
+                },
+                "read-your-write under load": {
+                    "name": "read-your-write under load",
+                    "path": "::read-your-write under load",
+                    "id": "8473f6d550536d0337826c61b5306d88",
+                    "passes": 20,
+                    "fails": 0
+                },
+                "join 201": {
+                    "name": "join 201",
+                    "path": "::join 201",
+                    "id": "0431b7ecac5c5bebc3abe2eb761b5c47",
+                    "passes": 20,
+                    "fails": 0
+                },
+                "joiner leave 200": {
+                    "name": "joiner leave 200",
+                    "path": "::joiner leave 200",
+                    "id": "954021074bdf562f425561047a6f8910",
+                    "passes": 20,
+                    "fails": 0
+                },
+                "leader leave 200": {
+                    "name": "leader leave 200",
+                    "path": "::leader leave 200",
+                    "id": "cb59cfdf32deca5ed3dc8f39839b088c",
+                    "passes": 20,
+                    "fails": 0
+                }
+            },
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e"
+    }
+}

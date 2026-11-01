@@ -57,6 +57,11 @@ jobs:
             sleep 10
           done
           wait $K6PID
+      - name: "Mixed workload - 99 readers + paced team mutation churn"
+        run: |
+          set -o pipefail
+          k6 run -e BASE_URL=http://localhost:3000 --summary-export loadtest/ci-k6-mix-summary.json loadtest/board-mix.k6.js | tee k6-mix-output.txt
+
       - name: Dataset counts after load
         if: always()
         run: psql "$DATABASE_URL" -t -c "SELECT (SELECT count(*) FROM profiles) users,(SELECT count(*) FROM teams) teams,(SELECT count(*) FROM team_members) members,(SELECT count(*) FROM teams t WHERE t.member_count<>(SELECT count(*) FROM team_members m WHERE m.team_id=t.id)) mismatched"
@@ -104,4 +109,6 @@ jobs:
             loadtest/ci-k6-summary.json
             k6-output.txt
             ci-profile.txt
+            loadtest/ci-k6-mix-summary.json
+            k6-mix-output.txt
             api-ci.log
