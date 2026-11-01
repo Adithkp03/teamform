@@ -49,21 +49,31 @@ export default async function eventRoutes(app: FastifyInstance) {
     return leader;
   }
 
-  function sseHead(reply: any) {
+  function sseHead(req: any, reply: any) {
     reply.hijack();
-    reply.raw.writeHead(200, {
+    // Hijacking the raw response bypasses @fastify/cors, so the SSE headers
+    // must mirror its origin policy here - without them a cross-origin web
+    // client cannot open the stream at all (caught by the e2e realtime spec).
+    const headers: Record<string, string> = {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
-    });
+    };
+    const origin = req.headers.origin as string | undefined;
+    const allowed = process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : null;
+    if (origin && (!allowed || allowed.includes(origin))) {
+      headers['access-control-allow-origin'] = origin;
+      headers.vary = 'Origin';
+    }
+    reply.raw.writeHead(200, headers);
   }
 
   if (MODE === 'listen') {
     app.get('/api/events', { preHandler: authenticate }, async (req: any, reply) => {
       const userId = req.userId as string;
       await rateLimit(`sse:${userId}`, 20, 60);
-      sseHead(reply);
+      sseHead(req, reply);
       reply.raw.write(`event: sync\ndata: {"reason":"connected"}\n\n`);
 
       const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
@@ -181,7 +191,7 @@ export default async function eventRoutes(app: FastifyInstance) {
   app.get('/api/events', { preHandler: authenticate }, async (req: any, reply: any) => {
     const userId = req.userId as string;
     await rateLimit(`sse:${userId}`, 20, 60);
-    sseHead(reply);
+    sseHead(req, reply);
 
     // Cursor: Last-Event-ID header from a reconnecting client. Absent = fresh
     // connect: start at the current tail and tell the client to refetch state.

@@ -9,7 +9,8 @@ export default function Board() {
   const { token } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
-  const [board, setBoard] = useState<{ teams: any[]; people: any[] } | null>(null);
+  const [board, setBoard] = useState<{ teams: any[]; people: any[]; next_teams_cursor: string | null; next_people_cursor: string | null } | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [myTeam, setMyTeam] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [joining, setJoining] = useState(false);
@@ -19,8 +20,26 @@ export default function Board() {
   const joinKeyRef = useRef(newIdempotencyKey()); // one key per attempt; regenerated after each outcome
 
   const refresh = useCallback(() => {
-    api('/api/board', { token }).then(setBoard).catch((e) => toast(e.message, 'error'));
+    api('/api/board?limit=24', { token }).then(setBoard).catch((e) => toast(e.message, 'error'));
   }, [token]);
+
+  async function loadMore() {
+    if (!board || loadingMore) return;
+    const params = new URLSearchParams({ limit: '24' });
+    if (tab === 'teams' && board.next_teams_cursor) params.set('teams_cursor', board.next_teams_cursor);
+    if (tab === 'people' && board.next_people_cursor) params.set('people_cursor', board.next_people_cursor);
+    if (!params.has('teams_cursor') && !params.has('people_cursor')) return;
+    setLoadingMore(true);
+    try {
+      const next = await api(`/api/board?${params}`, { token });
+      setBoard((prev) => prev && {
+        teams: tab === 'teams' ? [...prev.teams, ...next.teams] : prev.teams,
+        people: tab === 'people' ? [...prev.people, ...next.people] : prev.people,
+        next_teams_cursor: next.next_teams_cursor ?? prev.next_teams_cursor,
+        next_people_cursor: next.next_people_cursor ?? prev.next_people_cursor,
+      });
+    } catch (e: any) { toast(e.message, 'error'); } finally { setLoadingMore(false); }
+  }
 
   useEffect(() => {
     refresh();
@@ -90,7 +109,7 @@ export default function Board() {
         </button>
       </div>
 
-      {!board && <p className="text-slate-500">Loading board...</p>}
+      {!board && <p className="text-slate-400">Loading board...</p>}
 
       {tab === 'teams' && board && (
         <ul className="grid gap-3 sm:grid-cols-2" aria-label="Teams looking for members">
@@ -102,7 +121,7 @@ export default function Board() {
                   {t.member_count}/{t.team_size_max}
                 </span>
               </div>
-              <p className="mt-1 text-xs text-slate-500">Led by {t.leader_name}</p>
+              <p className="mt-1 text-xs text-slate-400">Led by {t.leader_name}</p>
               {t.wanted_skills?.length > 0 && (
                 <p className="mt-2 flex flex-wrap gap-1">{t.wanted_skills.map((s: string) => <span key={s} className="badge">{s}</span>)}</p>
               )}
@@ -112,8 +131,17 @@ export default function Board() {
               </div>
             </li>
           ))}
-          {board.teams.length === 0 && <p className="text-slate-500">No teams looking right now. Create one!</p>}
         </ul>
+      )}
+
+      {tab === 'teams' && board && board.teams.length === 0 && (
+        <p className="text-slate-400">No teams looking right now. Create one!</p>
+      )}
+
+      {tab === 'teams' && board?.next_teams_cursor && (
+        <button className="btn-secondary mx-auto block" onClick={loadMore} disabled={loadingMore}>
+          {loadingMore ? 'Loading...' : 'Load more teams'}
+        </button>
       )}
 
       {tab === 'people' && board && (
@@ -121,12 +149,21 @@ export default function Board() {
           {board.people.map((p) => (
             <li key={p.id} className="card">
               <p className="font-semibold">{p.display_name}</p>
-              <p className="text-xs text-slate-500">{p.timezone}</p>
+              <p className="text-xs text-slate-400">{p.timezone}</p>
               <p className="mt-2 flex flex-wrap gap-1">{(p.skills ?? []).map((s: string) => <span key={s} className="badge">{s}</span>)}</p>
             </li>
           ))}
-          {board.people.length === 0 && <p className="text-slate-500">Nobody is looking right now.</p>}
         </ul>
+      )}
+
+      {tab === 'people' && board && board.people.length === 0 && (
+        <p className="text-slate-400">Nobody is looking right now.</p>
+      )}
+
+      {tab === 'people' && board?.next_people_cursor && (
+        <button className="btn-secondary mx-auto block" onClick={loadMore} disabled={loadingMore}>
+          {loadingMore ? 'Loading...' : 'Load more people'}
+        </button>
       )}
     </div>
   );

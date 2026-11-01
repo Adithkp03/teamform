@@ -7,8 +7,9 @@
  * - The board payload is identical for every authenticated user (no
  *   user-specific fields), so cross-user serving leaks nothing the endpoint
  *   would not already return.
- * - Key scope: the `limit` query parameter only (the board is
- *   hackathon-wide today; if a hackathon filter is added it joins the key).
+ * - Key scope: the `limit` query parameter plus both pagination cursors
+ *   (the board is hackathon-wide today; if a hackathon filter is added it
+ *   joins the key).
  * - Freshness: same-instance mutations invalidate synchronously AFTER the
  *   response commit (onResponse hook, 2xx only - a rolled-back transaction
  *   never invalidates). Cross-instance staleness is bounded by the TTL
@@ -19,7 +20,7 @@
 const TTL_MS = 1000;
 const MAX_ENTRIES = 32;
 
-const cache = new Map<number, { at: number; body: unknown }>();
+const cache = new Map<string, { at: number; body: unknown }>();
 // Generation guard for the read/mutation race: a read that MISSED may be
 // in flight while a mutation commits and invalidates. Without a version,
 // that read would repopulate the cache with the pre-mutation snapshot and
@@ -31,19 +32,19 @@ export function boardGeneration(): number {
   return generation;
 }
 
-export function cachedBoard(limit: number): unknown | null {
-  const hit = cache.get(limit);
+export function cachedBoard(key: string): unknown | null {
+  const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.body;
   return null;
 }
 
-export function storeBoard(limit: number, body: unknown, readGen: number): void {
+export function storeBoard(key: string, body: unknown, readGen: number): void {
   if (readGen !== generation) return; // a mutation landed while we read
-  if (cache.size >= MAX_ENTRIES && !cache.has(limit)) {
-    const oldest = cache.keys().next().value as number;
+  if (cache.size >= MAX_ENTRIES && !cache.has(key)) {
+    const oldest = cache.keys().next().value as string;
     cache.delete(oldest);
   }
-  cache.set(limit, { at: Date.now(), body });
+  cache.set(key, { at: Date.now(), body });
 }
 
 export function invalidateBoard(): void {

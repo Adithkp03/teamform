@@ -32,7 +32,7 @@ export default function Team() {
   }
 
   if (error) return <p role="alert" className="text-danger">{error}</p>;
-  if (!data) return <p className="text-slate-500">Loading team...</p>;
+  if (!data) return <p className="text-slate-400">Loading team...</p>;
 
   const { team, members, member_count, is_member, is_leader, pending_requests } = data;
   const full = member_count >= team.team_size_max;
@@ -59,7 +59,7 @@ export default function Team() {
         <div className="card space-y-2" aria-label="Invite code">
           <h2 className="font-semibold">Invite code</h2>
           <p className="font-mono text-lg tracking-[0.3em] text-accent">{team.invite_code}</p>
-          <p className="text-xs text-slate-500">Expires in ~{expiresIn}h. Share it with people you trust.</p>
+          <p className="text-xs text-slate-400">Expires in ~{expiresIn}h. Share it with people you trust.</p>
           <div className="flex gap-2">
             <button className="btn-ghost" onClick={() => { navigator.clipboard.writeText(team.invite_code); toast('Copied'); }}>Copy</button>
             {is_leader && <button className="btn-ghost" onClick={() => act(`/api/teams/${id}/invite/rotate`, 'New code generated')}>Rotate code</button>}
@@ -93,7 +93,7 @@ export default function Team() {
             {pending_requests.map((r: any) => (
               <li key={r.id} className="card flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p className="font-medium">{r.display_name} <span className="text-xs text-slate-500">{r.timezone}</span></p>
+                  <p className="font-medium">{r.display_name} <span className="text-xs text-slate-400">{r.timezone}</span></p>
                   {r.message && <p className="text-sm text-slate-400">"{r.message}"</p>}
                   <p className="mt-1 flex flex-wrap gap-1">{(r.skills ?? []).map((s: string) => <span key={s} className="badge">{s}</span>)}</p>
                 </div>

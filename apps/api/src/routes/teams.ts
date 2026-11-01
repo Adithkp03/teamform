@@ -115,6 +115,7 @@ export default async function teamRoutes(app: FastifyInstance) {
 
   // ---- Join requests ----
   app.post('/api/teams/:id/requests', { preHandler: authenticate }, idempotent('create_join_request', async (req: any) => {
+    await rateLimit(`join_request:${req.userId}`, 10, 60);
     const body = parse(joinRequestSchema, req.body);
     const teamId = req.params.id;
     return withTx(async (c) => {
@@ -138,6 +139,7 @@ export default async function teamRoutes(app: FastifyInstance) {
   }));
 
   app.post('/api/requests/:id/accept', { preHandler: authenticate }, respond(async (req: any) => {
+    await rateLimit(`moderate:${req.userId}`, 30, 60);
     return withTx(async (c) => {
       // Lock request row AND team row: concurrent accepts for the same team
       // serialize on the team row, so the seat check cannot race.
@@ -167,6 +169,7 @@ export default async function teamRoutes(app: FastifyInstance) {
   }));
 
   app.post('/api/requests/:id/decline', { preHandler: authenticate }, respond(async (req: any) => {
+    await rateLimit(`moderate:${req.userId}`, 30, 60);
     return withTx(async (c) => {
       const { rows } = await c.query(
         `SELECT jr.*, t.leader_id FROM join_requests jr JOIN teams t ON t.id = jr.team_id WHERE jr.id = $1 FOR UPDATE OF jr`,
@@ -184,6 +187,7 @@ export default async function teamRoutes(app: FastifyInstance) {
 
   // ---- Leave / remove / leadership rules ----
   app.post('/api/teams/:id/leave', { preHandler: authenticate }, respond(async (req: any) => {
+    await rateLimit(`leave:${req.userId}`, 10, 60);
     return withTx(async (c) => {
       const { rows } = await c.query(`SELECT * FROM teams WHERE id = $1 FOR UPDATE`, [req.params.id]);
       const team = rows[0];
@@ -209,6 +213,7 @@ export default async function teamRoutes(app: FastifyInstance) {
   }));
 
   app.delete('/api/teams/:id/members/:userId', { preHandler: authenticate }, respond(async (req: any) => {
+    await rateLimit(`moderate:${req.userId}`, 30, 60);
     return withTx(async (c) => {
       const { rows } = await c.query(`SELECT * FROM teams WHERE id = $1 FOR UPDATE`, [req.params.id]);
       const team = rows[0];

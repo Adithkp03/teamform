@@ -12,7 +12,7 @@ export default function Suggestions() {
     api('/api/suggestions', { token }).then(setData).catch((e) => toast(e.message, 'error'));
   }, [token]);
 
-  if (!data) return <p className="text-slate-500">Loading suggestions...</p>;
+  if (!data) return <p className="text-slate-400">Loading suggestions...</p>;
 
   return (
     <div className="space-y-4">
@@ -25,7 +25,7 @@ export default function Suggestions() {
               <p className="font-semibold">{s.display_name}</p>
               <span className="badge" aria-label={`score ${s.score}`}>score {s.score}</span>
             </div>
-            <p className="text-xs text-slate-500">{s.timezone}</p>
+            <p className="text-xs text-slate-400">{s.timezone}</p>
             <p className="mt-2 flex flex-wrap gap-1">{(s.skills ?? []).map((x: string) => <span key={x} className="badge">{x}</span>)}</p>
             <dl className="mt-2 grid grid-cols-3 gap-1 text-xs text-slate-400">
               <div><dt>Complements you</dt><dd>{s.complementary_skills}</dd></div>
@@ -34,8 +34,8 @@ export default function Suggestions() {
             </dl>
           </li>
         ))}
-        {data.suggestions.length === 0 && <p className="text-slate-500">No suggestions yet - fill in your skills on your profile.</p>}
       </ul>
+      {data.suggestions.length === 0 && <p className="text-slate-400">No suggestions yet - fill in your skills on your profile.</p>}
     </div>
   );
 }

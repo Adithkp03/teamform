@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db.js';
 import { authenticate } from '../auth.js';
+import { rateLimit } from '../ratelimit.js';
 
 /**
  * Teammate suggestions, ranked by an explained score:
@@ -12,6 +13,7 @@ import { authenticate } from '../auth.js';
  */
 export default async function suggestionRoutes(app: FastifyInstance) {
   app.get('/api/suggestions', { preHandler: authenticate }, async (req: any) => {
+    await rateLimit(`suggest:${req.userId}`, 30, 60);
     const { rows } = await pool.query(
       `WITH me AS (SELECT skills, utc_offset_minutes FROM profiles WHERE id = $1),
             scored AS (

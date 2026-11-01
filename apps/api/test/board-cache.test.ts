@@ -105,7 +105,7 @@ describe('board cache', () => {
     await board(u.token); // warm
     const genAtReadStart = boardGeneration(); // a concurrent read starts now (cache miss path)
     invalidateBoard();                          // a mutation commits + invalidates mid-read
-    storeBoard(50, { teams: [], people: [], generated_at: 'stale-snapshot' }, genAtReadStart);
+    storeBoard('50||', { teams: [], people: [], generated_at: 'stale-snapshot' }, genAtReadStart);
     const r = await board(u.token);
     expect(r.json().generated_at).not.toBe('stale-snapshot'); // stale store was dropped
   });
