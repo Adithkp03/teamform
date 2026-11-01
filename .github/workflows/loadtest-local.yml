@@ -50,9 +50,10 @@ jobs:
           k6 run -e BASE_URL=http://localhost:3000 -e "TOKEN=$TOKEN" --summary-export loadtest/ci-k6-summary.json loadtest/board.k6.js | tee k6-output.txt &
           K6PID=$!
           # Controlled environment profiling: per-process CPU of API vs
-          # Postgres vs k6 during the run, printed to the job log.
+          # Postgres vs k6 during the run. Saved into the artifact as
+          # ci-profile.txt so the evidence survives the virtualized job log.
           while kill -0 $K6PID 2>/dev/null; do
-            ps -eo comm,%cpu --no-headers | awk '{a[$1]+=$2} END {for (k in a) if (a[k]>2) printf "%s=%.0f%% ", k, a[k]; print ""}'
+            ps -eo comm,%cpu --no-headers | awk '{a[$1]+=$2} END {for (k in a) if (a[k]>2) printf "%s=%.0f%% ", k, a[k]; print ""}' | tee -a ci-profile.txt
             sleep 10
           done
           wait $K6PID
@@ -102,4 +103,5 @@ jobs:
           path: |
             loadtest/ci-k6-summary.json
             k6-output.txt
+            ci-profile.txt
             api-ci.log
