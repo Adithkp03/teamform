@@ -56,7 +56,7 @@ Target from the problem statement: **p95 < 200 ms with 100 concurrent users.**
   already sees every change) and disclose up-to-TTL staleness. This is
   the next warranted fix, chosen by the profiling above.
 - **RESOLVED on the hosted runner (5be6cae):** the 1s-TTL board cache
-  (post-commit root-scope invalidation, auth outside the cache, 32-entry
+  (root-scope onSend pre-response invalidation, auth outside the cache, 32-entry
   cap, cross-instance staleness bounded by TTL and pinned by test) took
   the hosted run to **p95 = 76.78 ms** (run #16, 111,668 reqs, 0.000%
   failed, max 2,243.7 ms cold-start spike; k6 v2.3.0). Local committed
@@ -72,7 +72,11 @@ Target from the problem statement: **p95 < 200 ms with 100 concurrent users.**
   zero 5xx, so the committed workload paces below the limit). Local,
   full seed: read p95 45.24ms, 469,770/469,770 checks - including
   field-level read-your-write (team id/name/member_count verified after
-  create, join and leave) - 0.00% failed. The field-level checks caught
+  create, join and leave) - 0.00% failed. Hosted CI run #24 (cca3c28):
+hot read p95 42.99 ms (206,551 reqs, 0 failed) and mixed read p95
+78.05 ms, 299,894/299,894 checks, 16 full create/join/leave cycles,
+0.000% failed - the workflow publishes both result tables to the run
+job summary on every push. The field-level checks caught
   a real race: invalidation ran in an onResponse hook, which fires after
   response bytes leave, so an instant client re-read could see the
   pre-mutation snapshot (~2/20 window); invalidation moved to onSend
