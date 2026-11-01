@@ -13,7 +13,7 @@
     "test": "npm run test -w @teamform/api",
     "build": "npm run build -w @teamform/web",
     "chaos": "bash scripts/chaos.sh",
-    "build:serverless": "npm run vercel-build -w @teamform/api"
+    "build:serverless": "npm run bundle -w @teamform/api"
   },
   "engines": {
     "node": ">=20"
