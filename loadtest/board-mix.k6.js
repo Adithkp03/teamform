@@ -114,7 +114,7 @@ export function mutate(data) {
   const created = http.post(
     `${BASE}/api/teams`,
     JSON.stringify({ name: `Mix ${Date.now()}`, looking_for_members: true, wanted_skills: ['k6'] }),
-    { headers: { ...json(data.leader), 'idempotency-key': `mix-${__VU}-${__ITER}` }, tags: { name: 'POST /api/teams' } },
+    { headers: { ...json(data.leader), 'idempotency-key': `mix-${String(__VU).padStart(3, '0')}-${String(__ITER).padStart(3, '0')}` }, tags: { name: 'POST /api/teams' } },
   );
   // Pace failures too: an early return without sleep hot-loops retries
   // inside the same fixed rate-limit window, which is how one transient
@@ -140,7 +140,7 @@ export function mutate(data) {
   const joined = http.post(
     `${BASE}/api/teams/join-by-code`,
     JSON.stringify({ code: team.invite_code }),
-    { headers: { ...json(data.joiner), 'idempotency-key': `mixj-${__VU}-${__ITER}` }, tags: { name: 'POST /join-by-code' } },
+    { headers: { ...json(data.joiner), 'idempotency-key': `mixj-${String(__VU).padStart(3, '0')}-${String(__ITER).padStart(3, '0')}` }, tags: { name: 'POST /join-by-code' } },
   );
   if (!check(joined, { 'join 201': (r) => r.status === 201 })) {
     logFailure('join', joined);
