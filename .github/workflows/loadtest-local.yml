@@ -41,12 +41,35 @@ jobs:
           test -n "$TOKEN" && test "$TOKEN" != "null"
           echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
       - uses: grafana/setup-k6-action@v1
+      - name: Dataset counts before load
+        run: psql "$DATABASE_URL" -t -c "SELECT (SELECT count(*) FROM profiles) users,(SELECT count(*) FROM teams) teams,(SELECT count(*) FROM team_members) members,(SELECT count(*) FROM teams t WHERE t.member_count<>(SELECT count(*) FROM team_members m WHERE m.team_id=t.id)) mismatched"
       - name: 'Board endpoint: 100 concurrent users, threshold p95 < 200ms'
-        run: k6 run -e BASE_URL=http://localhost:3000 -e "TOKEN=$TOKEN" --summary-export loadtest/ci-k6-summary.json loadtest/board.k6.js
+        run: k6 run -e BASE_URL=http://localhost:3000 -e "TOKEN=$TOKEN" --summary-export loadtest/ci-k6-summary.json loadtest/board.k6.js | tee k6-output.txt
+      - name: Dataset counts after load
+        if: always()
+        run: psql "$DATABASE_URL" -t -c "SELECT (SELECT count(*) FROM profiles) users,(SELECT count(*) FROM teams) teams,(SELECT count(*) FROM team_members) members,(SELECT count(*) FROM teams t WHERE t.member_count<>(SELECT count(*) FROM team_members m WHERE m.team_id=t.id)) mismatched"
+      # Self-reporting summary: the run overview page shows this without
+      # needing artifact downloads or log access.
+      - name: Publish load result to job summary
+        if: always()
+        run: |
+          {
+            echo '## k6 board load result (CI stack, 100 VUs / 60s, full seed)'
+            echo
+            jq -r '"| metric | value |", "|---|---|",
+              "| p95 | \(.metrics.http_req_duration.values["p(95)"])ms |",
+              "| p90 | \(.metrics.http_req_duration.values["p(90)"])ms |",
+              "| avg | \(.metrics.http_req_duration.values.avg)ms |",
+              "| max | \(.metrics.http_req_duration.values.max)ms |",
+              "| requests | \(.metrics.http_reqs.values.count) |",
+              "| failed | \(.metrics.http_req_failed.values.fails) |",
+              "| checks passed | \(.metrics.checks.values.passes)/\(.metrics.checks.values.passes + .metrics.checks.values.fails) |"' loadtest/ci-k6-summary.json
+          } >> "$GITHUB_STEP_SUMMARY" || tail -40 k6-output.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: k6-ci-results
           path: |
             loadtest/ci-k6-summary.json
+            k6-output.txt
             api-ci.log

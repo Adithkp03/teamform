@@ -4,80 +4,78 @@ Target from the problem statement: **p95 < 200 ms with 100 concurrent users.**
 
 ## Status, stated plainly
 
-- **Production measurement: not permitted by the host.** Vercel's policy
-  allows load testing only on Enterprise plans
+- **Local, full seed, board-only (the PS minimum scenario): MET, repeatable.**
+  Three back-to-back 100-VU / 60 s runs at commit `01dd52c`/`0ad0acb`:
+  p95 = 138.41 ms, 139.75 ms, 139.33 ms; ~48.5-49k requests each, 0 failures.
+  Dataset counts captured immediately before and after each run; zero
+  `member_count` drift. Raw: `docs/loadtest-local/repeatability-20261101/`.
+- **Local, full seed, harder robustness scenario (100 SSE streams + 100-VU
+  board load, two API instances): MET post-fix.** p95 = 149.73 ms, 45,941
+  requests, 0 failures, all 100 streams alive, 12/12 write probes delivered
+  to listeners on both instances (51-955 ms after write at a 1 s poll).
+  Raw: `docs/loadtest-local/multi-instance-postfix-20261101.json`.
+- **GitHub-hosted CI runner: open.** The `Load test (CI stack)` workflow runs
+  the same k6 suite on every push. Pre-fix runs measured 747 ms and 1,120 ms
+  (0 failures). The first post-fix run (#6, commit `0ad0acb`) failed in 1m32s;
+  the cause is **not yet established** (the token available to this project
+  lacks Actions log scope). The workflow now publishes k6 metrics and dataset
+  counts to the job summary on every run, so each push self-reports; the
+  hosted-runner result will be recorded here once read.
+- **Production measurement: not permitted by the host.** Vercel allows load
+  testing only on Enterprise plans
   (<https://vercel.com/kb/guide/what-s-vercel-s-policy-regarding-load-testing-deployments>);
   an unannounced 100-VU burst against the Hobby deployment was auto-mitigated
-  by the Vercel Security Checkpoint (99.94% of requests rejected at the edge -
-  that measures rejected edge traffic, not app throughput). There is no
-  supported way to load test the live URL on this plan, so **no production p95
-  is claimed anywhere in this submission**.
-- **Local / CI measurement: reproducible, seeded, raw artifacts committed.**
-  All numbers below are against the full seed (10,003 users, 2,000 teams,
-  6,000 members). They characterize the code; they are not a production
-  guarantee.
+  by the Vercel Security Checkpoint (99.94% of requests rejected at the edge).
+  No production p95 is claimed anywhere in this submission.
 
-## Correction
+## Correction history
 
-An earlier chat update quoted a local k6 PASS (p95 = 98.86 ms). That run used
-a **near-empty local database** and does not represent the seeded dataset. It
-is superseded by the full-seed measurements below and appears nowhere in the
-repo docs.
+Two earlier local PASS figures were dataset-invalid and are superseded:
+p95 = 98.86 ms (near-empty DB) and p95 = 72.3 ms (a test suite had truncated
+the seed before the run; caught and re-measured). Neither appears as a result
+anywhere. The pre-fix full-seed baseline was p95 = 372 ms
+(`baseline-fullseed-20261101-k6-summary.json`).
+
+## Diagnosis (all steps measured)
+
+1. Full-seed baseline: p95 = 372 ms, 290 req/s, Postgres at ~1.6 cores while
+   the API sat at ~0.2 cores - database CPU-bound, not framework-bound
+   (per-process sampler: `board-pass-20261101-cpu.txt` shows the post-fix
+   balance).
+2. tsx vs compiled esbuild server: 372 vs 370 ms - transpile overhead ruled
+   out.
+3. Authenticated no-op control (`GET /api/me`, same 100 VUs): p95 = 29.6 ms
+   at 4,926 req/s (`api-me-20261101-k6-summary.json`) - framework + JWT auth
+   ruled out.
+4. EXPLAIN ANALYZE on the full seed: the two board queries cost ~8.3 ms CPU
+   per request (aggregate over all 6,000 `team_members` rows + merge join
+   over 2,001 leader profiles before LIMIT). At ~290 req/s that alone pins
+   ~2.4 cores. An earlier planner-stats hypothesis was tested with
+   before/after VACUUM ANALYZE on identical data and refuted.
+
+## Fix (migrations 0005 + 0006, board query rewrite)
+
+- `teams.member_count`, maintained transactionally by trigger on
+  `team_members` inserts/deletes. Display/filter only: seat enforcement still
+  locks the team row and counts live, so the 50-racers/1-seat property does
+  not depend on the counter. Reconciliation is pinned by a dedicated suite
+  (`apps/api/test/member-count.test.ts`: join/leave/remove/last-member
+  delete/failed-join rollback/12-way concurrent join storm).
+- Partial index `profiles_board_idx`; people query now 0.25 ms.
+- Teams query rewritten page-first (CTE) so profiles are joined for only the
+  50 returned rows; both board queries run concurrently.
+- `member_count` is board-visible, so the teams notify trigger fires on
+  counter updates (0006) - board clients see count changes live; a dedicated
+  SSE test asserts this.
+- Result: teams query 5.4 -> ~0.4 ms, people 2.9 -> 0.25 ms; board p95
+  372 -> ~139 ms at ~800 req/s, Postgres ~0.9 cores, API ~0.6 cores.
 
 ## Environment
 
-Sandboxed container, 2 shared vCPUs, Node 22 via tsx (uncompiled), PostgreSQL
-16 embedded on the same box, k6 v0.55.0. Dataset: 10,003 users, 2,000 teams,
-6,000 members (`db/seed-sql.mjs`). Query cost is not the bottleneck: EXPLAIN
-ANALYZE on the full seed shows the board teams query at 4.5 ms and the people
-query at 2.4 ms (existing partial index `teams_board_idx`). The sandbox CPU
-(2 shared vCPUs running API + Postgres + k6 + 100 SSE streams) is the
-limiting factor in every measurement below; see
-`docs/loadtest-local/cpu-during-load.txt`.
-
-## Measurements (all: 100 VUs, no think time, 60 s, `loadtest/board.k6.js`)
-
-| Scenario | Requests | Failures | p95 | Notes |
-| --- | --- | --- | --- | --- |
-| Board only, near-empty DB (superseded) | 68,876 | 0 | 98.9 ms | kept only to explain the correction above |
-| Board + 100 SSE streams, one API instance, full seed | 12,659 | 0 | 577 ms | raw: `single-instance-20261101.json` |
-| Board + 100 SSE streams (50+50), TWO API instances, full seed | 16,493 | 0 | 401 ms | raw: `multi-instance-20261101.json` |
-
-The p95 < 200 ms target is **not met in any environment available to this
-project**, and that is the honest headline:
-
-| Environment | Scenario | Requests | Failures | p95 |
-| --- | --- | --- | --- | --- |
-| 2-vCPU sandbox | board-only, near-empty DB (superseded) | 68,876 | 0 | 98.9 ms |
-| 2-vCPU sandbox | board + 100 SSE, 1 API instance, full seed | 12,659 | 0 | 577 ms |
-| 2-vCPU sandbox | board + 100 SSE, 2 API instances, full seed | 16,493 | 0 | 401 ms |
-| 4-vCPU GitHub runner (run #1, commit 1d6e8c9) | board-only, full seed | 9,941 | 0 | 747 ms |
-| 4-vCPU GitHub runner (run #2, commit 805d56b) | board-only, full seed | 5,783 | 0 | 1,120 ms |
-
-The CI-stack runs (`.github/workflows/loadtest-local.yml`, every push) are
-board-only - the PS minimum scenario; the sandbox runs add 100 concurrent SSE
-streams - a harder robustness scenario. Zero failures in every run.
-
-**What is known:** per-query cost is small (EXPLAIN ANALYZE on the full seed:
-4.5 ms / 2.4 ms per board query; before/after VACUUM ANALYZE on identical
-data: 3.1/1.9 ms vs 2.2/1.8 ms - a planner-stats hypothesis was tested and
-refuted; the ANALYZE remains in `db/seed-sql.mjs` as bulk-load hygiene only).
-A CPU-contention hypothesis (API + Postgres + the k6 generator sharing a
-small box) is consistent with an older top snapshot
-(`docs/loadtest-local/cpu-during-load.txt`, autocannon era: Postgres backends
-~165% of 2 vCPUs) but is **not proven** for the current k6 setup - no
-per-process utilization was captured during these runs, and GitHub-runner vs
-sandbox differences are uncontrolled comparisons.
-
-**Not yet excluded:** serialization inside the API (single Node process),
-JWT verification cost per request, middleware order, pool queueing policy,
-the k6 threshold/benchmark setup itself, and tsx (uncompiled) overhead. The
-next diagnostic step, in order, with no paid services: (1) capture per-process
-CPU/IO for API vs Postgres vs k6 during a full-seed run; (2) rerun with the
-API compiled (prod runs an esbuild bundle; CI currently runs tsx); (3) rerun
-with a no-op authenticated endpoint to separate framework+auth overhead from
-board-query work; (4) only then attribute. The requirement remains open, not
-waived; not all measurable environments have been exhausted.
+Sandboxed container, 2 shared vCPUs, Node 22 (tsx and compiled esbuild bundle
+measured; both pass), PostgreSQL 16 embedded on the same box, k6 v0.55.0.
+Dataset: ~10,000 users, 2,000 teams, 6,000 members (`db/seed-sql.mjs`, with
+VACUUM ANALYZE as bulk-load hygiene).
 
 ## Realtime under load (SSE, poll mode)
 
@@ -85,29 +83,28 @@ Poll mode uses one **shared fleet ticker per API process**: a single interval
 does one dispatch transaction (serialized across processes by a
 transaction-scoped advisory lock), one events read from the minimum open
 cursor, and one batched leadership lookup for all connected clients; each
-client's work is in-memory filtering plus a socket write. This replaced a
-per-client poll that exhausted the 5-connection pool at ~100 concurrent
-streams (measured: 5 s pool-queue timeouts, write 500s). Multi-instance note:
+client's work is in-memory filtering plus a socket write. Multi-instance note:
 the ticker is per process, so N serverless instances cost N x ~3 queries per
 second against Postgres, not 1; the advisory lock prevents duplicate dispatch
 across instances, and per-client cursors keep delivery correct per instance.
 
-Multi-instance measurement (2 processes, same DB, 100 SSE streams total,
-k6 100 VUs against instance A): 12/12 team-create probes were delivered to
-listeners on **both** instances, writes alternating A/B. Delivery latency
-after write completion: min 31 ms, median ~500 ms, max 1,203 ms at a 1 s poll
-interval. 0 missed events, 0 failed writes, all 100 streams alive at the end.
-Raw: `docs/loadtest-local/multi-instance-20261101.json`.
+Multi-instance measurement post-fix (2 processes, same DB, 100 SSE streams
+total, k6 100 VUs against instance A): 12/12 team-create probes delivered to
+listeners on **both** instances, writes alternating A/B; delivery latency
+51-955 ms at a 1 s poll; 0 missed events, 0 failed writes, all 100 streams
+alive at the end; board p95 149.73 ms during the run.
 
 Correctness properties covered by tests (`apps/api/test/sse.test.ts`):
 leader-only visibility of join_requests events re-evaluated every interval,
-Last-Event-ID resume, `sync` forced when the cursor falls behind pruning, and
-stream rotation before the serverless max duration.
+Last-Event-ID resume, `sync` forced when the cursor falls behind pruning,
+stream rotation before the serverless max duration, gapless delivery under
+concurrent writers (asserted semantically, not by a brittle event count), and
+member_count invalidation events reaching connected board clients.
 
 ## Reproduce
 
 ```bash
-docker compose up -d db api && node db/seed-sql.mjs   # 10,003 users, 2,000 teams
+docker compose up -d db api && node db/seed-sql.mjs   # ~10,000 users, 2,000 teams
 TOKEN=$(curl -s -X POST localhost:3000/api/auth/signup -H 'content-type: application/json' \
   -d '{"email":"lt@example.com","password":"load-pass-1","display_name":"LT"}' | jq -r .token)
 k6 run -e BASE_URL=http://localhost:3000 -e TOKEN=$TOKEN loadtest/board.k6.js

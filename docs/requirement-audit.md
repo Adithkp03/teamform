@@ -21,7 +21,7 @@ limitation; BLOCKED = cannot be demonstrated in the available environment.
 | Teammate suggestions with explained scoring | DONE | scoring string explains each factor; timezone uses utc_offset_minutes only (no Calcutta/Kolkata divergence) |
 | >=20 API tests in CI | DONE | 58 API/integration tests (auth-security, core, race, sse) + 6 chaos tests, counted separately; CI green on every push |
 | Seed: 10k users / 2k teams | DONE | `db/seed-sql.mjs`; evidence `docs/seed-evidence/`; seed users have no login |
-| Load test: p95 < 200 ms @ 100 concurrent on board | BLOCKED/UNMET | not permitted on the Hobby host (vendor policy, Enterprise-only); local/CI measurements: 401-577 ms (2-vCPU sandbox + 100 SSE), 747-1120 ms (4-vCPU GitHub runner, board-only). 0 failures everywhere. Cause not yet attributed - open requirement with a documented next-diagnostic plan in docs/load-test-report.md |
+| Load test: p95 < 200 ms @ 100 concurrent on board | MET locally / OPEN on hosted CI runner / not permitted in production | Local, full seed, repeatable (3 runs): p95 138.4-139.8 ms, ~48.5-49k reqs, 0 failures, raw artifacts + before/after dataset counts in docs/loadtest-local/repeatability-20261101/. Harder local scenario (100 SSE + 100-VU board, 2 instances): p95 149.7 ms, 0 failures. Production: Vercel Hobby policy forbids load tests (Enterprise-only; burst was edge-blocked), so no production p95 is claimed. GitHub-hosted runner: pre-fix runs 747/1120 ms; first post-fix run failed in 1m32s, cause not yet established (log access limited); workflow now self-reports metrics to the job summary every push. Full diagnosis + fix history in docs/load-test-report.md |
 | React UI, phone + keyboard usable | DONE | mobile 390px + keyboard-only flows verified with screenshots |
 | Live URL on free tier | DONE | https://teamform-web.vercel.app + https://teamform-api.vercel.app (Vercel Hobby + Neon free, Singapore) |
 
@@ -40,6 +40,6 @@ limitation; BLOCKED = cannot be demonstrated in the available environment.
 | --- | --- |
 | GitHub repo | DONE (private; visibility flip pending user decision) |
 | Live URL | DONE |
-| Load-test report | DONE (docs/load-test-report.md, honest UNMET headline) |
+| Load-test report | DONE (docs/load-test-report.md: local MET headline with correction history, diagnosis, and honest open items for hosted CI + production) |
 | 1-page design doc | DONE (docs/design.md) |
 | <=5 min walkthrough video | PENDING |
