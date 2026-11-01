@@ -47,7 +47,15 @@ jobs:
         run: |
           set -o pipefail
           k6 version
-          k6 run -e BASE_URL=http://localhost:3000 -e "TOKEN=$TOKEN" --summary-export loadtest/ci-k6-summary.json loadtest/board.k6.js | tee k6-output.txt
+          k6 run -e BASE_URL=http://localhost:3000 -e "TOKEN=$TOKEN" --summary-export loadtest/ci-k6-summary.json loadtest/board.k6.js | tee k6-output.txt &
+          K6PID=$!
+          # Controlled environment profiling: per-process CPU of API vs
+          # Postgres vs k6 during the run, printed to the job log.
+          while kill -0 $K6PID 2>/dev/null; do
+            ps -eo comm,%cpu --no-headers | awk '{a[$1]+=$2} END {for (k in a) if (a[k]>2) printf "%s=%.0f%% ", k, a[k]; print ""}'
+            sleep 10
+          done
+          wait $K6PID
       - name: Dataset counts after load
         if: always()
         run: psql "$DATABASE_URL" -t -c "SELECT (SELECT count(*) FROM profiles) users,(SELECT count(*) FROM teams) teams,(SELECT count(*) FROM team_members) members,(SELECT count(*) FROM teams t WHERE t.member_count<>(SELECT count(*) FROM team_members m WHERE m.team_id=t.id)) mismatched"
