@@ -4,6 +4,9 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { useToast } from '../components/Toasts';
 
+// Dev login tab only for local builds (VITE_SHOW_DEV_LOGIN=true); production never shows it.
+const SHOW_DEV_LOGIN = import.meta.env.VITE_SHOW_DEV_LOGIN === 'true';
+
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -37,7 +40,7 @@ export default function Login() {
       <h1 className="mb-2 text-2xl font-bold">Sign in to TeamForm</h1>
       <p className="mb-6 text-sm text-slate-400">Race-proof team formation for hackathons.</p>
       <div className="mb-4 flex gap-2" role="tablist" aria-label="Sign in mode">
-        {(['login', 'signup', 'dev'] as const).map((m) => (
+        {((SHOW_DEV_LOGIN ? ['login', 'signup', 'dev'] : ['login', 'signup']) as Array<'login' | 'signup' | 'dev'>).map((m) => (
           <button key={m} role="tab" aria-selected={mode === m} onClick={() => setMode(m)}
             className={mode === m ? 'btn-primary flex-1' : 'btn-secondary flex-1'}>
             {m === 'login' ? 'Sign in' : m === 'signup' ? 'Create account' : 'Dev login'}
