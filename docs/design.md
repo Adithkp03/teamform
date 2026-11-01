@@ -30,28 +30,30 @@ Enrollment + hackathon-scoped board, board cursor pagination, suggestion-score t
 
 ## Session and token semantics (post-hardening, exact)
 
-- Access tokens are 15-minute JWTs carrying `sub` and `sid` (the refresh-token
-  row id of the session they were issued with). Refresh tokens are opaque
-  30-day secrets; only their SHA-256 hash is stored.
-- Rotation: presenting a valid refresh token revokes it (with `rotated_at`)
-  and mints a new session row. The old session id dies with it: open SSE
-  streams on that session receive `session_revoked` and the client reconnects
-  with the new pair. Other devices have their own session rows and are not
-  affected by another device's rotation.
+- Access tokens are 15-minute JWTs carrying `sub` and `sid`, where `sid` is
+  the SESSION FAMILY id (not an individual token row). Refresh tokens are
+  opaque 30-day secrets; only their SHA-256 hash is stored.
+- Session family (the vetted rotation pattern): one family per login. Every
+  rotation mints the next token INSIDE the same family (`family_id`), so a
+  session is one revocable unit no matter how often it rotates. Silent
+  refresh does not change `sid`: open SSE streams survive rotation.
 - Grace window (`REFRESH_GRACE_MS`, default 10s): two tabs racing to present
-  the SAME rotated token inside the window each get a FRESH, independent
-  session (no stored successor is ever returned, so no plaintext successor
-  exists server-side). The number of sessions a grace storm can mint is
-  bounded by the refresh rate limit (30/min/IP; tested: 40 rapid replays
-  yield <= 28 sessions + 429s, all distinct). After the window, presenting a
-  rotated token is treated as replay and revokes ALL of the user's sessions.
-- Logout and password reset revoke WITHOUT a grace window (no `rotated_at`),
-  so their streams end immediately at the next poll.
-- SSE revocation latency: the poll-mode fleet sweep re-validates sessions at
-  the top of every tick (`EVENTS_POLL_MS`, 1000ms in production). Under the
-  CI-measured test (50 connected clients, one-statement revoke), all streams
-  ended within the measured wall time logged by the suite; this is a measured
-  target, not a strict guarantee under production load.
+  the SAME rotated token inside the window each perform another rotation
+  WITHIN THE SAME FAMILY. A grace hit never returns a stored successor (no
+  plaintext exists server-side) and never creates an independent session:
+  tested across different source IPs, logout with any one grace-minted token
+  revokes the legitimate rotation and every grace sibling together.
+- Replay: presenting a rotated token AFTER the window revokes the ENTIRE
+  family (compromise scoped to that session; other devices are separate
+  families and unaffected). Logout and password reset revoke without a grace
+  window - logout kills the presented token's family, reset kills every
+  family of the user.
+- SSE revocation: the poll-mode fleet sweep re-validates each connected
+  session family at the top of every tick (`EVENTS_POLL_MS`, 1000ms in
+  production); a dead family's stream receives `session_revoked` and ends.
+  Measured locally: 50 connected clients, all revoked in one statement ->
+  50/50 streams ended, 39ms wall at a 50ms poll. That is a measured result,
+  not a strict guarantee under production load.
 - Email: when no mail provider is configured (production default), reset and
   verification endpoints return 503 `email_not_configured` and the UI says
   delivery is not configured - it never claims an email was sent.

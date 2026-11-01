@@ -190,23 +190,26 @@ test('join-request creation is rate limited at 10/min per user', async () => {
   expect(last).toBe(429);
 });
 
-test('grace replays are bounded by the refresh rate limit; each mint is an independent session', async () => {
-  const s = await signup('gracebound@x.dev');
+test('grace replay never branches the session family (multi-IP): one logout kills every grace-minted token', async () => {
+  const s = await signup('family@x.dev');
   const old = s.json().refresh_token;
   const r1 = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: old } });
   expect(r1.statusCode).toBe(200);
-  // hammer the rotated token inside the grace window (multi-tab storm)
-  const results = await Promise.all(Array.from({ length: 40 }, () =>
-    app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: old } })));
-  const okTokens = results.filter((r) => r.statusCode === 200).map((r) => r.json().refresh_token);
-  const limited = results.filter((r) => r.statusCode === 429).length;
-  // the refresh bucket (30/min/IP, shared with signup + first rotation above)
-  // is the hard bound on sessions a grace storm can mint
-  expect(okTokens.length).toBeGreaterThan(0);
-  expect(okTokens.length + limited).toBe(40);
-  expect(okTokens.length).toBeLessThanOrEqual(28);
-  expect(new Set(okTokens).size).toBe(okTokens.length); // every mint is a distinct session row
-  // and the legitimately rotated token is unaffected by the storm
-  const r2 = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1.json().refresh_token } });
-  expect([200, 429]).toContain(r2.statusCode);
+  // concurrent presentations of the SAME rotated token from different IPs
+  // (distributed tabs, or an attacker racing): each rotates INSIDE the same
+  // family - no independent persistent session is ever created
+  const minted: string[] = [];
+  for (const ip of ['10.0.0.1', '10.0.0.2', '10.0.0.3']) {
+    const res = await app.inject({ method: 'POST', url: '/api/auth/refresh', remoteAddress: ip, payload: { refresh_token: old } });
+    expect(res.statusCode).toBe(200);
+    minted.push(res.json().refresh_token);
+  }
+  expect(new Set(minted).size).toBe(3);
+  // family correctness: logout with ONE grace-minted token revokes the whole
+  // family - the legitimate rotation AND every grace sibling die together
+  const lo = await app.inject({ method: 'POST', url: '/api/auth/logout', remoteAddress: '10.0.0.9', payload: { refresh_token: minted[0] } });
+  expect(lo.statusCode).toBe(200);
+  for (const t of [...minted.slice(1), r1.json().refresh_token]) {
+    expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', remoteAddress: '10.0.0.8', payload: { refresh_token: t } })).statusCode).toBe(401);
+  }
 });

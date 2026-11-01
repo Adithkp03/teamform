@@ -312,7 +312,7 @@ describe('SSE session revocation', () => {
 });
 
 describe('SSE session lifecycle under refresh rotation', () => {
-  test('silent refresh ends the rotated session stream; another device is unaffected', async () => {
+  test('silent refresh keeps the stream alive (same session family); other device unaffected', async () => {
     const email = `rot-${crypto.randomUUID()}@example.com`;
     const a = await signupHttp(email);
     const loginRes = await fetch(`${base}/api/auth/login`, {
@@ -320,19 +320,21 @@ describe('SSE session lifecycle under refresh rotation', () => {
       body: JSON.stringify({ email, password: 'password123' }),
     });
     const b = await loginRes.json();
-    const streamA = await fetch(`${base}/api/events`, { headers: { authorization: `Bearer ${a.token}` } });
+    const ctrl = new AbortController();
+    const streamA = await fetch(`${base}/api/events`, { signal: ctrl.signal, headers: { authorization: `Bearer ${a.token}` } });
     expect(streamA.status).toBe(200);
-    // normal silent refresh on device A rotates the session id
+    // normal silent refresh on device A rotates the token INSIDE the family:
+    // the sid (family id) is unchanged, so the stream must survive
     const rot = await fetch(`${base}/api/auth/refresh`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ refresh_token: a.refresh_token }),
     });
     expect(rot.ok).toBe(true);
-    // device A's old stream ends (client reconnects with the rotated pair)
-    const endA = await readUntilEnd(streamA, 8000);
-    expect(endA.done).toBe(true);
-    expect(endA.text).toContain('session_revoked');
-    // device B's independent session is untouched by A's rotation
+    const probe = await readUntilEnd(streamA, 3000);
+    expect(probe.done).toBe(false);
+    expect(probe.text).not.toContain('session_revoked');
+    ctrl.abort();
+    // device B's independent family is untouched
     const meB = await fetch(`${base}/api/me`, { headers: { authorization: `Bearer ${b.token}` } });
     expect(meB.status).toBe(200);
   }, 15000);

@@ -42,20 +42,22 @@ export async function authenticate(req: any, _reply: any) {
 const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
 
 /** Issue an opaque 30-day refresh token; only its SHA-256 hash is stored. */
-export async function issueRefreshToken(userId: string): Promise<{ token: string; id: string }> {
+/** Start or extend a session family; only the token's SHA-256 hash is stored. */
+export async function issueRefreshToken(userId: string, familyId?: string): Promise<{ token: string; id: string; familyId: string }> {
   const token = randomBytes(32).toString('hex');
   const { rows } = await pool.query(
-    `INSERT INTO auth_refresh_tokens (user_id, token_hash, expires_at)
-     VALUES ($1, $2, now() + interval '30 days') RETURNING id`,
-    [userId, hashToken(token)],
+    `INSERT INTO auth_refresh_tokens (user_id, token_hash, expires_at, family_id)
+     VALUES ($1, $2, now() + interval '30 days', COALESCE($3::uuid, gen_random_uuid())) RETURNING id, family_id`,
+    [userId, hashToken(token), familyId ?? null],
   );
-  return { token, id: rows[0].id };
+  return { token, id: rows[0].id, familyId: rows[0].family_id };
 }
 
-/** True while the session (refresh-token row) behind an access token lives. */
+/** True while the session family (sid in access tokens) has a live token. */
 export async function isSessionValid(sid: string): Promise<boolean> {
   const { rows } = await pool.query(
-    `SELECT 1 FROM auth_refresh_tokens WHERE id = $1 AND revoked_at IS NULL AND expires_at > now()`,
+    `SELECT 1 FROM auth_refresh_tokens
+     WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL AND expires_at > now() LIMIT 1`,
     [sid],
   );
   return rows.length > 0;
@@ -68,10 +70,14 @@ export async function revokeAllRefreshTokens(userId: string): Promise<void> {
   );
 }
 
-/** Logout: revoke exactly the presented token. Unknown tokens are a no-op. */
+/** Logout: revoke the presented token's ENTIRE session family - grace-minted
+ *  sibling tokens must not survive a logout. Unknown tokens are a no-op. */
 export async function revokeRefreshToken(token: string): Promise<void> {
   await pool.query(
-    `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE token_hash = $1 AND revoked_at IS NULL`,
+    `UPDATE auth_refresh_tokens SET revoked_at = now()
+     WHERE COALESCE(family_id, id) = (
+       SELECT COALESCE(family_id, id) FROM auth_refresh_tokens WHERE token_hash = $1
+     ) AND revoked_at IS NULL`,
     [hashToken(token)],
   );
 }
@@ -88,26 +94,43 @@ export async function revokeRefreshToken(token: string): Promise<void> {
 // get a grace window.
 const graceMs = () => Number(process.env.REFRESH_GRACE_MS ?? 10_000);
 
-export async function rotateRefreshToken(oldToken: string): Promise<{ userId: string; token: string; id: string }> {
+// Session-family rotation (the vetted pattern): one family per login. The
+// sid in access tokens is the FAMILY id, so silent refresh does not disturb
+// open SSE streams, and every token a client can hold - including anything
+// minted through the grace window - belongs to one family that logout,
+// password reset or replay detection revokes atomically.
+//
+// Grace window: a rotated token presented within REFRESH_GRACE_MS performs
+// another rotation INSIDE the same family. Racing tabs therefore converge on
+// individual current tokens of ONE session instead of branching independent
+// sessions. The grace window never crosses family boundaries and can never
+// create or extend a second session.
+export async function rotateRefreshToken(oldToken: string): Promise<{ userId: string; token: string; id: string; familyId: string }> {
   const { rows } = await pool.query(
-    `SELECT id, user_id, revoked_at, rotated_at, expires_at FROM auth_refresh_tokens WHERE token_hash = $1`,
+    `SELECT id, user_id, revoked_at, rotated_at, expires_at, COALESCE(family_id, id) AS family_id
+     FROM auth_refresh_tokens WHERE token_hash = $1`,
     [hashToken(oldToken)],
   );
   if (!rows.length) throw errors.unauthorized();
   const row = rows[0];
   if (row.revoked_at) {
     if (row.rotated_at && Date.now() - new Date(row.rotated_at).getTime() <= graceMs()) {
-      // legitimate rotation race (second tab / retried response)
-      const next = await issueRefreshToken(row.user_id);
-      return { userId: row.user_id, token: next.token, id: next.id };
+      // legitimate rotation race: rotate again, same family
+      const next = await issueRefreshToken(row.user_id, row.family_id);
+      return { userId: row.user_id, token: next.token, id: next.id, familyId: row.family_id };
     }
-    await revokeAllRefreshTokens(row.user_id);
+    // replay after the window: kill the whole family, not just this token
+    await pool.query(
+      `UPDATE auth_refresh_tokens SET revoked_at = now()
+       WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
+      [row.family_id],
+    );
     throw errors.unauthorized();
   }
   if (new Date(row.expires_at).getTime() <= Date.now()) throw errors.unauthorized();
   await pool.query(`UPDATE auth_refresh_tokens SET revoked_at = now(), rotated_at = now() WHERE id = $1`, [row.id]);
-  const next = await issueRefreshToken(row.user_id);
-  return { userId: row.user_id, token: next.token, id: next.id };
+  const next = await issueRefreshToken(row.user_id, row.family_id);
+  return { userId: row.user_id, token: next.token, id: next.id, familyId: row.family_id };
 }
 
 /** Single-use action token (reset: 30 min, verify: 7 days); hash stored. */

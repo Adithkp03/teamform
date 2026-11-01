@@ -57,7 +57,7 @@ export default async function authRoutes(app: FastifyInstance) {
     const verifyToken = await issueActionToken(id, 'verify');
     await sendAuthMail(body.email.toLowerCase(), 'verify', authMailUrl('verify', verifyToken));
     const session = await issueRefreshToken(id);
-    return { token: signToken(id, session.id), refresh_token: session.token, user_id: id };
+    return { token: signToken(id, session.familyId), refresh_token: session.token, user_id: id };
   });
 
   app.post('/api/auth/login', async (req) => {
@@ -72,7 +72,7 @@ export default async function authRoutes(app: FastifyInstance) {
       throw errors.unauthorized();
     }
     const session = await issueRefreshToken(rows[0].id);
-    return { token: signToken(rows[0].id, session.id), refresh_token: session.token, user_id: rows[0].id };
+    return { token: signToken(rows[0].id, session.familyId), refresh_token: session.token, user_id: rows[0].id };
   });
 
   // Rotation issues a new access token + refresh token and revokes the old
@@ -81,8 +81,8 @@ export default async function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/refresh', async (req) => {
     const body = parse(z.object({ refresh_token: z.string().min(1).max(128) }), req.body);
     await rateLimit(`auth:${req.ip}`, 30, 60);
-    const { userId, token, id } = await rotateRefreshToken(body.refresh_token);
-    return { token: signToken(userId, id), refresh_token: token, user_id: userId };
+    const { userId, token, familyId } = await rotateRefreshToken(body.refresh_token);
+    return { token: signToken(userId, familyId), refresh_token: token, user_id: userId };
   });
 
   // Logout revokes the refresh session. The current access token remains

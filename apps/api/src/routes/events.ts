@@ -135,9 +135,10 @@ export default async function eventRoutes(app: FastifyInstance) {
       const sids = [...new Set([...clients].filter((c) => !c.closed && c.sessionId).map((c) => c.sessionId!))];
       if (sids.length) {
         const { rows: validRows } = await pool.query(
-          `SELECT id FROM auth_refresh_tokens WHERE id = ANY($1::uuid[]) AND revoked_at IS NULL AND expires_at > now()`,
+          `SELECT DISTINCT COALESCE(family_id, id) AS family_id FROM auth_refresh_tokens
+           WHERE COALESCE(family_id, id) = ANY($1::uuid[]) AND revoked_at IS NULL AND expires_at > now()`,
           [sids]);
-        const valid = new Set(validRows.map((r) => r.id as string));
+        const valid = new Set(validRows.map((r) => r.family_id as string));
         for (const c of [...clients]) {
           if (c.closed || !c.sessionId || valid.has(c.sessionId)) continue;
           try { c.reply.raw.write(`event: sync\ndata: {"reason":"session_revoked"}\n\n`); c.reply.raw.end(); } catch { /* already gone */ }
