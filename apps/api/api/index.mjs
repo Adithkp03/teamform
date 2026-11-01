@@ -53364,6 +53364,9 @@ function buildApp(opts = {}) {
     if (err?.code === "23503") {
       return reply.code(409).send({ error: { code: "conflict", message: "Referenced record no longer exists" } });
     }
+    if (typeof err?.statusCode === "number" && err.statusCode >= 400 && err.statusCode < 500) {
+      return reply.code(err.statusCode).send({ error: { code: "bad_request", message: err.message } });
+    }
     console.error(err);
     return reply.code(500).send({ error: { code: "internal", message: "Internal server error" } });
   });
