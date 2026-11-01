@@ -43,13 +43,30 @@ limiting factor in every measurement below; see
 | Board + 100 SSE streams, one API instance, full seed | 12,659 | 0 | 577 ms | raw: `single-instance-20261101.json` |
 | Board + 100 SSE streams (50+50), TWO API instances, full seed | 16,493 | 0 | 401 ms | raw: `multi-instance-20261101.json` |
 
-The p95 < 200 ms target is **not met in this sandbox** under full-seed
-coexistence load. The limiting factor is sandbox CPU, not query cost (above)
-and not connection count (0 failures in every run). The CI workflow
-`.github/workflows/loadtest-local.yml` reproduces the full-seed seeded run on
-every push on a 4-vCPU GitHub runner (API + Postgres service + k6 on the same
-runner) and uploads the raw k6 summary as an artifact; its result, not this
-sandbox, is the current best local-topology number.
+The p95 < 200 ms target is **not met in any environment available to this
+project**, and that is the honest headline:
+
+| Environment | Scenario | Requests | Failures | p95 |
+| --- | --- | --- | --- | --- |
+| 2-vCPU sandbox | board-only, near-empty DB (superseded) | 68,876 | 0 | 98.9 ms |
+| 2-vCPU sandbox | board + 100 SSE, 1 API instance, full seed | 12,659 | 0 | 577 ms |
+| 2-vCPU sandbox | board + 100 SSE, 2 API instances, full seed | 16,493 | 0 | 401 ms |
+| 4-vCPU GitHub runner (run #1, commit 1d6e8c9) | board-only, full seed | 9,941 | 0 | 747 ms |
+| 4-vCPU GitHub runner (run #2, commit 805d56b) | board-only, full seed | 5,783 | 0 | 1,120 ms |
+
+The CI-stack runs (`.github/workflows/loadtest-local.yml`, every push) are
+board-only - the PS minimum scenario; the sandbox runs add 100 concurrent SSE
+streams - a harder robustness scenario. Query cost is NOT the limiter
+(EXPLAIN ANALYZE on the full seed: 4.5 ms / 2.4 ms per board query, with or
+without fresh planner statistics - measured before/after VACUUM ANALYZE on
+identical data: 3.1/1.9 ms vs 2.2/1.8 ms). Zero failures in every run. The
+limiter is CPU contention on shared free compute (API + Postgres + the k6
+generator on the same small box; GitHub runner CPUs measure slower than the
+sandbox's). A `VACUUM ANALYZE` was added to `db/seed-sql.mjs` on a
+planner-stats hypothesis that measurement then REFUTED - it is kept as bulk-
+load hygiene, not as a performance fix. Closing the last gap would need less
+contended compute (a paid runner class, a deployed region-colocated stack,
+or a host that permits load testing), not more query work.
 
 ## Realtime under load (SSE, poll mode)
 
