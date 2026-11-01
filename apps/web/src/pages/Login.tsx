@@ -11,7 +11,7 @@ export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
-  const [mode, setMode] = useState<'login' | 'signup' | 'dev'>('login');
+  const [mode, setMode] = useState<'login' | 'signup' | 'dev' | 'forgot'>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -21,6 +21,12 @@ export default function Login() {
     e.preventDefault();
     setBusy(true);
     try {
+      if (mode === 'forgot') {
+        await api('/api/auth/forgot-password', { method: 'POST', body: { email } });
+        toast('If an account exists for that email, a reset link is on its way.');
+        setMode('login');
+        return;
+      }
       const path = mode === 'dev' ? '/api/auth/dev-login' : `/api/auth/${mode}`;
       const body = mode === 'dev'
         ? { display_name: name || 'Dev User' }
@@ -28,7 +34,7 @@ export default function Login() {
           ? { email, password, display_name: name || email.split('@')[0] }
           : { email, password };
       const res = await api(path, { method: 'POST', body });
-      login(res.token, res.user_id);
+      login(res.token, res.user_id, res.refresh_token);
       navigate('/profile');
     } catch (err: any) {
       toast(err.message, 'error');
@@ -48,14 +54,26 @@ export default function Login() {
         ))}
       </div>
       <form onSubmit={submit} className="card space-y-4">
-        {mode !== 'login' && (
+        {mode === 'forgot' && (
+          <>
+            <p className="text-sm text-slate-400">Enter your account email and we will send a reset link.</p>
+            <div>
+              <label className="label" htmlFor="email">Email</label>
+              <input id="email" type="email" className="input" autoComplete="email" value={email}
+                onChange={(e) => setEmail(e.target.value)} required autoFocus />
+            </div>
+            <button className="btn-primary w-full" disabled={busy}>Send reset link</button>
+            <button type="button" className="btn-ghost w-full" onClick={() => setMode('login')}>Back to sign in</button>
+          </>
+        )}
+        {mode !== 'login' && mode !== 'forgot' && (
           <div>
             <label className="label" htmlFor="name">Display name</label>
             <input id="name" className="input" value={name} onChange={(e) => setName(e.target.value)}
               required={mode === 'dev'} autoFocus={mode === 'dev'} maxLength={80} />
           </div>
         )}
-        {mode !== 'dev' && (
+        {mode !== 'dev' && mode !== 'forgot' && (
           <>
             <div>
               <label className="label" htmlFor="email">Email</label>
@@ -67,14 +85,22 @@ export default function Login() {
               <input id="password" type="password" className="input" minLength={8}
                 autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
                 value={password} onChange={(e) => setPassword(e.target.value)} required />
-              {mode === 'signup' && <p className="mt-1 text-xs text-slate-500">At least 8 characters.</p>}
+              {mode === 'signup' && <p className="mt-1 text-xs text-slate-400">At least 8 characters.</p>}
             </div>
           </>
         )}
-        <button className="btn-primary w-full" disabled={busy}>
-          {mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Continue'}
-        </button>
-        {mode === 'dev' && <p className="text-xs text-slate-500">Dev login is for local/demo use when the server enables it.</p>}
+        {mode !== 'forgot' && (
+          <button className="btn-primary w-full" disabled={busy}>
+            {mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Continue'}
+          </button>
+        )}
+        {mode === 'login' && (
+          <button type="button" className="w-full text-center text-xs text-accent hover:underline"
+            onClick={() => setMode('forgot')}>
+            Forgot your password?
+          </button>
+        )}
+        {mode === 'dev' && <p className="text-xs text-slate-400">Dev login is for local/demo use when the server enables it.</p>}
       </form>
     </div>
   );

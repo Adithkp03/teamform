@@ -10,6 +10,8 @@
 
 let sseActive = false;
 
+import { getToken, refreshAccessToken } from './api';
+
 export function subscribeBoardChanges(onChange: () => void, token: string | null): () => void {
   const apiUrl = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
   if (!token) {
@@ -29,9 +31,18 @@ export function subscribeBoardChanges(onChange: () => void, token: string | null
     if (closed) return;
     ctrl = new AbortController();
     try {
-      const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+      const liveToken = getToken() ?? token;
+      const headers: Record<string, string> = { authorization: `Bearer ${liveToken}` };
       if (lastId) headers['last-event-id'] = lastId;
-      const res = await fetch(`${apiUrl}/api/events`, { headers, signal: ctrl.signal });
+      let res = await fetch(`${apiUrl}/api/events`, { headers, signal: ctrl.signal });
+      if (res.status === 401) {
+        // Short-lived access token expired mid-rotation: refresh and retry once.
+        const nt = await refreshAccessToken();
+        if (nt) {
+          headers.authorization = `Bearer ${nt}`;
+          res = await fetch(`${apiUrl}/api/events`, { headers, signal: ctrl.signal });
+        }
+      }
       if (!res.ok || !res.body) throw new Error(`events ${res.status}`);
       attempt = 0;
       const reader = res.body.getReader();

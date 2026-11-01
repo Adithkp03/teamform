@@ -9,6 +9,8 @@ export default function Profile() {
   const toast = useToast();
   const navigate = useNavigate();
   const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState<string | null>(null);
+  const [emailVerified, setEmailVerified] = useState<boolean | null>(null);
   const [skills, setSkills] = useState('');
   const [looking, setLooking] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -20,6 +22,8 @@ export default function Profile() {
       setDisplayName(r.profile.display_name);
       setSkills((r.profile.skills ?? []).join(', '));
       setLooking(r.profile.looking_for_team);
+      setEmail(r.profile.email ?? null);
+      setEmailVerified(r.profile.email_verified ?? null);
     }).catch(() => {});
   }, [token]);
 
@@ -51,11 +55,29 @@ export default function Profile() {
         <label className="label" htmlFor="sk">Skills (comma separated)</label>
         <input id="sk" className="input" placeholder="react, node, postgres" value={skills} onChange={(e) => setSkills(e.target.value)} />
       </div>
-      <p className="text-xs text-slate-500">Timezone: {tz} (used for teammate matching)</p>
+      <p className="text-xs text-slate-400">Timezone: {tz} (used for teammate matching)</p>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" className="h-4 w-4 accent-accent" checked={looking} onChange={(e) => setLooking(e.target.checked)} />
         Show me on the "looking for teammates" board
       </label>
+      {email && (
+        <div className="rounded border border-line bg-panel px-3 py-2 text-sm">
+          <p>Email: <span className="font-mono">{email}</span>{' '}
+            {emailVerified
+              ? <span className="badge">verified</span>
+              : <span className="badge">not verified</span>}
+          </p>
+          {!emailVerified && (
+            <button type="button" className="mt-2 text-xs text-accent hover:underline"
+              onClick={async () => {
+                try { await api('/api/auth/resend-verification', { method: 'POST', token, body: {} }); toast('Verification email sent'); }
+                catch (e: any) { toast(e.message, 'error'); }
+              }}>
+              Resend verification email
+            </button>
+          )}
+        </div>
+      )}
       <button className="btn-primary" disabled={busy}>Save</button>
     </form>
   );
