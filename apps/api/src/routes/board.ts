@@ -76,7 +76,9 @@ export default async function boardRoutes(app: FastifyInstance) {
 
   app.get('/api/health', async () => {
     await pool.query('SELECT 1');
-    return { ok: true };
+    // Exact deployed commit (Vercel injects VERCEL_GIT_COMMIT_SHA), so a live
+    // claim can always be tied to the code actually serving it.
+    return { ok: true, commit: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.COMMIT_SHA ?? null };
   });
 
   app.get('/api/metrics', async () => {

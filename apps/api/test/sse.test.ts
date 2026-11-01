@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { app, migrate, resetDb, makeUser, auth, idemKey, createTeam } from './helpers.js';
+import { pool } from '../src/db.js';
+import { signToken } from '../src/auth.js';
 
 /**
  * SSE tests run against a real listening server (inject cannot stream).
@@ -307,4 +309,58 @@ describe('SSE session revocation', () => {
     const me = await fetch(`${base}/api/me`, { headers: { authorization: `Bearer ${b.token}` } });
     expect(me.status).toBe(200);
   }, 15000);
+});
+
+describe('SSE session lifecycle under refresh rotation', () => {
+  test('silent refresh ends the rotated session stream; another device is unaffected', async () => {
+    const email = `rot-${crypto.randomUUID()}@example.com`;
+    const a = await signupHttp(email);
+    const loginRes = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password: 'password123' }),
+    });
+    const b = await loginRes.json();
+    const streamA = await fetch(`${base}/api/events`, { headers: { authorization: `Bearer ${a.token}` } });
+    expect(streamA.status).toBe(200);
+    // normal silent refresh on device A rotates the session id
+    const rot = await fetch(`${base}/api/auth/refresh`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refresh_token: a.refresh_token }),
+    });
+    expect(rot.ok).toBe(true);
+    // device A's old stream ends (client reconnects with the rotated pair)
+    const endA = await readUntilEnd(streamA, 8000);
+    expect(endA.done).toBe(true);
+    expect(endA.text).toContain('session_revoked');
+    // device B's independent session is untouched by A's rotation
+    const meB = await fetch(`${base}/api/me`, { headers: { authorization: `Bearer ${b.token}` } });
+    expect(meB.status).toBe(200);
+  }, 15000);
+
+  test('measured: revocation-to-stream-end across 50 connected clients', async () => {
+    // mint 50 sessions directly (avoids signup rate limits/bcrypt noise); each
+    // access token carries the session id claim the fleet sweep checks
+    const N = 50;
+    const conns: { token: string; sid: string; res: Response }[] = [];
+    for (let i = 0; i < N; i++) {
+      const u = await makeUser(`Lat ${i}`);
+      const { rows } = await pool.query(
+        `INSERT INTO auth_refresh_tokens (user_id, token_hash, expires_at)
+         VALUES ($1, $2, now() + interval '30 days') RETURNING id`, [u.id, `lat-${crypto.randomUUID()}`]);
+      const sid = rows[0].id;
+      const res = await fetch(`${base}/api/events`, { headers: { authorization: `Bearer ${signToken(u.id, sid)}` } });
+      expect(res.status).toBe(200);
+      conns.push({ token: '', sid, res });
+    }
+    // revoke all 50 sessions in one statement, then measure wall time to end
+    const t0 = Date.now();
+    await pool.query(`UPDATE auth_refresh_tokens SET revoked_at = now() WHERE id = ANY($1::uuid[])`,
+      [conns.map((c) => c.sid)]);
+    const ends = await Promise.all(conns.map((c) => readUntilEnd(c.res, 15000)));
+    const wallMs = Date.now() - t0;
+    const ended = ends.filter((e) => e.done).length;
+    console.log(`MEASURED revocation->stream-end: ${ended}/${N} ended, ${wallMs}ms wall (last client), poll=${process.env.EVENTS_POLL_MS ?? 1000}ms`);
+    expect(ended).toBe(N);
+    expect(wallMs).toBeLessThan(15000); // generous ceiling; the logged number is the record
+  }, 30000);
 });
