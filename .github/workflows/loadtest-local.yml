@@ -89,7 +89,7 @@ jobs:
             }
             try {
               const m = require("./loadtest/ci-k6-mix-summary.json").metrics;
-              const board = m['http_req_duration{name:GET /api/board}'] ?? {};
+              const board = m["http_req_duration{name:GET /api/board}"] ?? {};
               const rows = [
                 ["read p95", board["p(95)"] + "ms"],
                 ["read p90", board["p(90)"] + "ms"],
