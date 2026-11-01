@@ -21,11 +21,15 @@ Target from the problem statement: **p95 < 200 ms with 100 concurrent users.**
   seed (139 ms local vs 378 ms CI); the cause is an unproven environment
   hypothesis (runner CPU class), not investigated further because the local
   reproduction is the repeatable standard and production load testing is
-  not permitted. **Tooling finding:** k6 as installed by
-  `grafana/setup-k6-action` (v1.x) exits 0 even when a threshold is tainted,
-  so runs #5-#10 showed green while #10 had actually violated p(95)<200
-  (verified from the artifact's `k6-output.txt` and summary JSON, where
-  `thresholds["p(95)<200"] = true`). The workflow now has an explicit
+  not permitted. **Tooling finding:** on the hosted runner the k6 step exited 0 even
+  though its threshold was tainted - verified in run #11's job log, where
+  the k6 step shows no failure while the summary JSON records
+  `thresholds["p(95)<200"] = true` and `k6-output.txt` shows
+  `X 'p(95)<200' p(95)=378.04ms`. This contradicts k6's documented exit
+  code 99 (ThresholdsHaveFailed, errext/exitcodes/codes.go); the exact
+  cause (installed k6 version, the setup-k6-action wrapper, or runner
+  shell behavior) is NOT attributed. So runs #5-#10 showed green while
+  #10 had actually violated p(95)<200. The workflow now has an explicit
   gate step that fails the job on any tainted threshold - expect the next
   hosted run to go red honestly until the runner meets 200 ms. Run #6's
   earlier failure was separately explained from its job log: a genuine

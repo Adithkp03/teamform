@@ -44,7 +44,10 @@ jobs:
       - name: Dataset counts before load
         run: psql "$DATABASE_URL" -t -c "SELECT (SELECT count(*) FROM profiles) users,(SELECT count(*) FROM teams) teams,(SELECT count(*) FROM team_members) members,(SELECT count(*) FROM teams t WHERE t.member_count<>(SELECT count(*) FROM team_members m WHERE m.team_id=t.id)) mismatched"
       - name: 'Board endpoint: 100 concurrent users, threshold p95 < 200ms'
-        run: k6 run -e BASE_URL=http://localhost:3000 -e "TOKEN=$TOKEN" --summary-export loadtest/ci-k6-summary.json loadtest/board.k6.js | tee k6-output.txt
+        run: |
+          set -o pipefail
+          k6 version
+          k6 run -e BASE_URL=http://localhost:3000 -e "TOKEN=$TOKEN" --summary-export loadtest/ci-k6-summary.json loadtest/board.k6.js | tee k6-output.txt
       - name: Dataset counts after load
         if: always()
         run: psql "$DATABASE_URL" -t -c "SELECT (SELECT count(*) FROM profiles) users,(SELECT count(*) FROM teams) teams,(SELECT count(*) FROM team_members) members,(SELECT count(*) FROM teams t WHERE t.member_count<>(SELECT count(*) FROM team_members m WHERE m.team_id=t.id)) mismatched"
