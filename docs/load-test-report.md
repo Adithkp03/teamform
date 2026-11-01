@@ -98,15 +98,18 @@ https://github.com/Adithkp03/teamform/actions/runs/41337522593 - FAILED.
 Hot step green (hosted p95 55.49 ms, 153,878 requests, 0.000% failed). The
 mixed step crossed `http_req_failed rate<0.01`: 1,796 of 1,798 `create 201`
 checks failed while every read and field-level read-your-write check passed
-(hosted mixed read p95 92.74 ms). Root cause was in the workload script,
-not the app, established by logged status/body (not inferred):
+(hosted mixed read p95 92.74 ms). Run #20 itself did not log the failing
+responses' statuses; the explanation below reproduces the same failure
+class locally with logged status/body and is consistent with #20's counts
+(2 passes then a self-sustaining failure loop on every mutator VU):
 
-- Initial failure class: `409 already_in_team` on create. k6 does not
-  assign scenario VU ids in scenario order - the script pinned leader/
-  joiner pairs by `__VU >= 100`, but mutator VUs received ids outside
-  that range (observed 40-43), so all four shared one pair and concurrent
-  creates conflicted. (Concurrent same-user creates also surfaced the
-  app's unique-index backstop: loser gets a generic 409, no corruption.)
+- Reproduced initial failure class: `409 already_in_team` on create. k6
+  does not assign scenario VU ids in scenario order - the script pinned
+  leader/joiner pairs by `__VU >= 100`, but mutator VUs received ids
+  outside that range (observed 40-43 locally), so all four shared one
+  pair and concurrent creates conflicted. (Concurrent same-user creates
+  also surfaced the app's unique-index backstop: loser gets a generic
+  409, no corruption.)
 - Amplification: the mutator's early returns skipped the pacing sleep, so
   the first 409 put each VU into a no-sleep retry loop for the rest of
   the run. Locally, mutations had never failed, so both defects were
