@@ -24,6 +24,13 @@ export async function api<T = any>(
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
+    // Expired or revoked token outside the auth endpoints: drop stored
+    // credentials and return to sign-in instead of showing broken pages.
+    if (res.status === 401 && !path.startsWith('/api/auth/')) {
+      localStorage.removeItem('tf_token');
+      localStorage.removeItem('tf_uid');
+      window.location.assign('/login');
+    }
     throw new ApiError(res.status, data?.error?.code ?? 'error', data?.error?.message ?? `HTTP ${res.status}`);
   }
   return data as T;

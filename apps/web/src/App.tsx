@@ -38,7 +38,7 @@ export default function App() {
       <Nav />
       <main id="main" className="mx-auto max-w-5xl px-4 py-6">
         <Routes>
-          <Route path="/login" element={<Login />} />
+          <Route path="/login" element={token ? <Navigate to="/board" replace /> : <Login />} />
           <Route path="/board" element={token ? <Board /> : <Navigate to="/login" replace />} />
           <Route path="/team/:id" element={token ? <Team /> : <Navigate to="/login" replace />} />
           <Route path="/suggestions" element={token ? <Suggestions /> : <Navigate to="/login" replace />} />
