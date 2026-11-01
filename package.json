@@ -13,7 +13,7 @@
     "test": "npm run test -w @teamform/api",
     "build": "npm run build -w @teamform/web",
     "chaos": "bash scripts/chaos.sh",
-    "build:serverless": "esbuild apps/api/src/serverless.ts --bundle --platform=node --format=esm --target=node20 --outfile=api/index.mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\""
+    "build:serverless": "npm run vercel-build -w @teamform/api"
   },
   "engines": {
     "node": ">=20"
