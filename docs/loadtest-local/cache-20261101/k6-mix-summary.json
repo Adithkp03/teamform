@@ -1,60 +1,145 @@
 {
+    "root_group": {
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {
+                "board 200": {
+                    "fails": 0,
+                    "name": "board 200",
+                    "path": "::board 200",
+                    "id": "2ea6aa17694cf91669e648c2e2a3eedd",
+                    "passes": 234829
+                },
+                "board has arrays": {
+                    "name": "board has arrays",
+                    "path": "::board has arrays",
+                    "id": "941cff009f6965b39595314dfdf02a88",
+                    "passes": 234829,
+                    "fails": 0
+                },
+                "create 201": {
+                    "name": "create 201",
+                    "path": "::create 201",
+                    "id": "156654209db568811cc0f7da2d599478",
+                    "passes": 16,
+                    "fails": 0
+                },
+                "ryw create: team on board with member_count 1": {
+                    "name": "ryw create: team on board with member_count 1",
+                    "path": "::ryw create: team on board with member_count 1",
+                    "id": "050995efc55f750d927322ce3069cc5b",
+                    "passes": 16,
+                    "fails": 0
+                },
+                "join 201": {
+                    "name": "join 201",
+                    "path": "::join 201",
+                    "id": "0431b7ecac5c5bebc3abe2eb761b5c47",
+                    "passes": 16,
+                    "fails": 0
+                },
+                "ryw join: member_count 2": {
+                    "path": "::ryw join: member_count 2",
+                    "id": "37a169c2524c7d071741e2d774460124",
+                    "passes": 16,
+                    "fails": 0,
+                    "name": "ryw join: member_count 2"
+                },
+                "joiner leave 200": {
+                    "path": "::joiner leave 200",
+                    "id": "954021074bdf562f425561047a6f8910",
+                    "passes": 16,
+                    "fails": 0,
+                    "name": "joiner leave 200"
+                },
+                "ryw leave: member_count 1": {
+                    "name": "ryw leave: member_count 1",
+                    "path": "::ryw leave: member_count 1",
+                    "id": "62ab7d950f0d41a4df9559c60c41e4e1",
+                    "passes": 16,
+                    "fails": 0
+                },
+                "leader leave 200": {
+                    "fails": 0,
+                    "name": "leader leave 200",
+                    "path": "::leader leave 200",
+                    "id": "cb59cfdf32deca5ed3dc8f39839b088c",
+                    "passes": 16
+                }
+            },
+        "name": "",
+        "path": ""
+    },
     "metrics": {
-        "iterations": {
-            "count": 232582,
-            "rate": 3472.5766613988917
+        "http_req_blocked": {
+            "med": 0.000789,
+            "max": 25.855904,
+            "p(90)": 0.001968,
+            "p(95)": 0.002566,
+            "avg": 0.003138999493509303,
+            "min": 0.000483
+        },
+        "vus": {
+            "value": 2,
+            "min": 2,
+            "max": 103
         },
         "http_req_failed{expected_response:true}": {
             "passes": 0,
-            "fails": 232686,
+            "fails": 234950,
             "thresholds": {
                 "rate<0.01": false
             },
             "value": 0
         },
-        "checks": {
-            "fails": 0,
-            "passes": 465244,
-            "value": 1
+        "http_req_connecting": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0.0005753295637369651,
+            "min": 0,
+            "med": 0,
+            "max": 2.872218
         },
-        "http_req_receiving": {
-            "p(95)": 9.34465875,
-            "avg": 1.2235990608115666,
-            "min": 0.006558,
-            "med": 0.010932,
-            "max": 118.499426,
-            "p(90)": 3.8235669999999997
+        "http_req_sending": {
+            "max": 65.174999,
+            "p(90)": 0.055903200000000014,
+            "p(95)": 0.1406413499999991,
+            "avg": 0.12295346927431282,
+            "min": 0.001587,
+            "med": 0.00247
         },
         "http_req_waiting": {
-            "max": 767.339765,
-            "p(90)": 36.094352,
-            "p(95)": 42.683876,
-            "avg": 23.720780543590926,
-            "min": 0.172462,
-            "med": 20.378147
+            "p(95)": 41.64268759999999,
+            "avg": 23.570958182702476,
+            "min": 0.173496,
+            "med": 20.043277500000002,
+            "max": 1580.03467,
+            "p(90)": 35.7649087
         },
-        "http_req_duration{expected_response:true}": {
-            "avg": 25.06425951588875,
-            "min": 0.182946,
-            "med": 21.491519500000003,
-            "max": 777.531018,
-            "p(90)": 38.883371499999996,
-            "p(95)": 46.3643855
+        "checks": {
+            "passes": 469770,
+            "fails": 0,
+            "value": 1
         },
-        "data_sent": {
-            "count": 76559494,
-            "rate": 1143075.1823997924
-        },
-        "http_req_duration{name:GET /api/board}": {
-            "min": 0.182946,
-            "med": 21.4865985,
-            "max": 720.473998,
-            "p(90)": 38.8631144,
-            "p(95)": 46.29488949999998,
-            "avg": 25.004087475685427,
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 234950,
             "thresholds": {
-                "p(95)<200": false
-            }
+                "rate<0.01": false
+            },
+            "value": 0
+        },
+        "http_req_duration": {
+            "avg": 24.837260663609193,
+            "min": 0.182861,
+            "med": 21.141613,
+            "max": 1589.065305,
+            "p(90)": 38.23844150000001,
+            "p(95)": 45.30275219999998
+        },
+        "http_reqs": {
+            "count": 234950,
+            "rate": 3523.297928268052
         },
         "http_req_tls_handshaking": {
             "avg": 0,
@@ -64,163 +149,67 @@
             "p(90)": 0,
             "p(95)": 0
         },
-        "http_req_sending": {
-            "p(90)": 0.056527,
-            "p(95)": 0.13624225,
-            "avg": 0.11987991148586374,
-            "min": 0.00169,
-            "med": 0.002517,
-            "max": 98.241458
+        "http_req_duration{name:GET /api/board}": {
+            "p(90)": 38.2139484,
+            "p(95)": 45.24292739999996,
+            "avg": 24.771799876135105,
+            "min": 0.182861,
+            "med": 21.137015,
+            "max": 1589.065305,
+            "thresholds": {
+                "p(95)<200": false
+            }
+        },
+        "data_received": {
+            "rate": 60883869.81415205,
+            "count": 4060021464
         },
         "vus_max": {
             "value": 103,
             "min": 103,
             "max": 103
         },
-        "http_req_failed": {
-            "passes": 0,
-            "fails": 232686,
-            "thresholds": {
-                "rate<0.01": false
-            },
-            "value": 0
-        },
-        "http_reqs": {
-            "count": 232686,
-            "rate": 3474.1294383669524
-        },
-        "http_req_connecting": {
-            "avg": 0.001342344889679654,
-            "min": 0,
-            "med": 0,
-            "max": 6.054955,
-            "p(90)": 0,
-            "p(95)": 0
-        },
         "iteration_duration": {
-            "p(90)": 39.4421903,
-            "p(95)": 47.10346269999999,
-            "avg": 26.652991866227147,
-            "min": 0.329009,
-            "med": 22.050338,
-            "max": 17534.083608
+            "avg": 26.410946502373598,
+            "min": 0.327838,
+            "med": 21.716431,
+            "max": 17769.854291,
+            "p(90)": 38.7769028,
+            "p(95)": 46.05805339999999
         },
-        "vus": {
-            "value": 2,
-            "min": 2,
-            "max": 103
+        "iterations": {
+            "count": 234845,
+            "rate": 3521.7233537523334
         },
-        "http_req_blocked": {
-            "p(95)": 0.002649,
-            "avg": 0.00362607212294687,
-            "min": 0.00051,
-            "med": 0.000796,
-            "max": 20.183699,
-            "p(90)": 0.002024
+        "http_req_receiving": {
+            "avg": 1.1433490116322638,
+            "min": 0.005438,
+            "med": 0.0106815,
+            "max": 71.867029,
+            "p(90)": 3.3784422000000003,
+            "p(95)": 9.021814549999995
         },
-        "data_received": {
-            "count": 4014127849,
-            "rate": 59933127.60363542
+        "http_req_duration{expected_response:true}": {
+            "min": 0.182861,
+            "med": 21.141613,
+            "max": 1589.065305,
+            "p(90)": 38.23844150000001,
+            "p(95)": 45.30275219999998,
+            "avg": 24.837260663609193
         },
-        "http_req_duration": {
-            "max": 777.531018,
-            "p(90)": 38.883371499999996,
-            "p(95)": 46.3643855,
-            "avg": 25.06425951588875,
-            "min": 0.182946,
-            "med": 21.491519500000003
+        "mix_full_cycles": {
+            "rate": 0.23993516430001632,
+            "count": 16,
+            "thresholds": {
+                "count>=12": false
+            }
+        },
+        "data_sent": {
+            "count": 77304313,
+            "rate": 1159251.4400471805
         }
     },
     "setup_data": {
-        "pairs": [
-            {
-                "joiner": "REDACTED_LOCAL_BENCHMARK_TOKEN",
-                "leader": "REDACTED_LOCAL_BENCHMARK_TOKEN"
-            },
-            {
-                "joiner": "REDACTED_LOCAL_BENCHMARK_TOKEN",
-                "leader": "REDACTED_LOCAL_BENCHMARK_TOKEN"
-            },
-            {
-                "joiner": "REDACTED_LOCAL_BENCHMARK_TOKEN",
-                "leader": "REDACTED_LOCAL_BENCHMARK_TOKEN"
-            },
-            {
-                "joiner": "REDACTED_LOCAL_BENCHMARK_TOKEN",
-                "leader": "REDACTED_LOCAL_BENCHMARK_TOKEN"
-            }
-        ],
         "reader": "REDACTED_LOCAL_BENCHMARK_TOKEN"
-    },
-    "root_group": {
-        "checks": {
-            "board 200": {
-                "id": "2ea6aa17694cf91669e648c2e2a3eedd",
-                "passes": 232566,
-                "fails": 0,
-                "name": "board 200",
-                "path": "::board 200"
-            },
-            "board has arrays": {
-                "id": "941cff009f6965b39595314dfdf02a88",
-                "passes": 232566,
-                "fails": 0,
-                "name": "board has arrays",
-                "path": "::board has arrays"
-            },
-            "create 201": {
-                "fails": 0,
-                "name": "create 201",
-                "path": "::create 201",
-                "id": "156654209db568811cc0f7da2d599478",
-                "passes": 16
-            },
-            "ryw create: team on board with member_count 1": {
-                "name": "ryw create: team on board with member_count 1",
-                "path": "::ryw create: team on board with member_count 1",
-                "id": "050995efc55f750d927322ce3069cc5b",
-                "passes": 16,
-                "fails": 0
-            },
-            "join 201": {
-                "name": "join 201",
-                "path": "::join 201",
-                "id": "0431b7ecac5c5bebc3abe2eb761b5c47",
-                "passes": 16,
-                "fails": 0
-            },
-            "ryw join: member_count 2": {
-                "path": "::ryw join: member_count 2",
-                "id": "37a169c2524c7d071741e2d774460124",
-                "passes": 16,
-                "fails": 0,
-                "name": "ryw join: member_count 2"
-            },
-            "joiner leave 200": {
-                "name": "joiner leave 200",
-                "path": "::joiner leave 200",
-                "id": "954021074bdf562f425561047a6f8910",
-                "passes": 16,
-                "fails": 0
-            },
-            "ryw leave: member_count 1": {
-                "path": "::ryw leave: member_count 1",
-                "id": "62ab7d950f0d41a4df9559c60c41e4e1",
-                "passes": 16,
-                "fails": 0,
-                "name": "ryw leave: member_count 1"
-            },
-            "leader leave 200": {
-                "name": "leader leave 200",
-                "path": "::leader leave 200",
-                "id": "cb59cfdf32deca5ed3dc8f39839b088c",
-                "passes": 16,
-                "fails": 0
-            }
-        },
-        "name": "",
-        "path": "",
-        "id": "d41d8cd98f00b204e9800998ecf8427e",
-        "groups": {}
     }
 }

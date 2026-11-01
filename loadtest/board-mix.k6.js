@@ -9,6 +9,7 @@
 // Target: p95 < 200 ms on reads WITH mutations in flight; no 5xx anywhere.
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
+import { Counter } from 'k6/metrics';
 
 export const options = {
   scenarios: {
@@ -20,10 +21,11 @@ export const options = {
     },
     mutator: {
       executor: 'constant-vus',
-      // 4 mutator pairs = 8 signups, under the 10/min per-IP signup limit.
-      // Each VU paces below its 5 creates/min per-user rate limit, so the
-      // mutation stream operates within the app's declared limits and any
-      // failure is a real failure, not a 429 the app intentionally sent.
+      // Each mutator VU signs up its own leader+joiner pair on its first
+      // iteration (8 signups total + 1 reader = 9, under the 10/min per-IP
+      // signup limit) and paces below its 5 creates/min per-user limit, so
+      // the mutation stream operates within the app's declared limits and
+      // any failure is a real failure, not a 429 the app intentionally sent.
       vus: 4,
       duration: '60s',
       exec: 'mutate',
@@ -33,6 +35,11 @@ export const options = {
     'http_req_duration{name:GET /api/board}': ['p(95)<200'],
     http_req_failed: ['rate<0.01'],
     'http_req_failed{expected_response:true}': ['rate<0.01'],
+    // Vacuous-pass guard: the read-your-write checks only execute on the
+    // success path, so a run where every create fails would show zero
+    // failing checks. Require at least 12 full create->join->leave cycles
+    // (4 VUs x ~3.5/min each) or the run fails even with a clean board p95.
+    mix_full_cycles: ['count>=12'],
   },
 };
 
@@ -50,17 +57,13 @@ function signup(tag) {
 }
 
 export function setup() {
-  const pairs = [];
-  for (let i = 0; i < 4; i++) pairs.push({ leader: signup(`l${i}`), joiner: signup(`j${i}`) });
-  return { reader: pairs[0].leader, pairs };
+  return { reader: signup('reader') };
 }
-
-// Scenario VU numbering: readers take 1-99, mutators take 100-103. Each
-// mutator VU pins itself to one pair so concurrent VUs never share users.
-const PAIR_IDX = __VU >= 100 ? (__VU - 100) % 4 : 0;
 
 // Log the first mutation failure per VU (status + body) so the CI job log
 // records the failure class instead of a bare check count.
+const fullCycles = new Counter('mix_full_cycles');
+
 let failureLogged = false;
 const logFailure = (what, r) => {
   if (failureLogged) return;
@@ -82,8 +85,30 @@ export function readBoard(data) {
   });
 }
 
+// Team the joiner may still be inside after a failed joiner-leave (the
+// script knows the id because the joiner only ever joins this VU's own
+// team). Cleared by the unstick retry at the top of the next cycle, so a
+// transient failure can never orphan a transferred-leadership team across
+// iterations.
+let stuckIn = null;
+
+// Per-VU pair, created lazily on the first iteration. k6 does NOT assign
+// scenario VU ids in scenario order (observed: mutators got __VU 40-43
+// while readers took the rest), so pinning pairs by __VU range collided:
+// four mutator VUs shared one leader and every concurrent create failed
+// 409 already_in_team - the initial failure class behind run #20's mix
+// failure, reproduced locally with logged status/body. Lazy per-VU signup
+// removes the assumption entirely: concurrent VUs can never share users.
+let myPair = null;
+
 export function mutate(data) {
-  data = { leader: data.pairs[PAIR_IDX].leader, joiner: data.pairs[PAIR_IDX].joiner };
+  if (!myPair) myPair = { leader: signup(`l${__VU}`), joiner: signup(`j${__VU}`) };
+  data = myPair;
+  if (stuckIn) {
+    const unstick = http.post(`${BASE}/api/teams/${stuckIn}/leave`, null, { headers: bearer(data.joiner), tags: { name: 'POST /leave' } });
+    if (unstick.status === 200 || unstick.status === 409) stuckIn = null;
+    else logFailure('unstick joiner leave', unstick);
+  }
   // create (leader) -> read-your-write on the board -> joiner joins -> joiner
   // leaves -> leader leaves (team deleted). Every step invalidates the cache.
   const created = http.post(
@@ -136,6 +161,10 @@ export function mutate(data) {
   const leaveJ = http.post(`${BASE}/api/teams/${team.id}/leave`, null, { headers: bearer(data.joiner), tags: { name: 'POST /leave' } });
   if (!check(leaveJ, { 'joiner leave 200': (r) => r.status === 200 })) {
     logFailure('joiner leave', leaveJ);
+    // Leader leaves (leadership transfers to the joiner); the joiner leaves
+    // the orphan via the stuckIn retry at the top of the next cycle, which
+    // deletes it (last member). No orphaned team survives the run.
+    stuckIn = team.id;
     http.post(`${BASE}/api/teams/${team.id}/leave`, null, { headers: bearer(data.leader), tags: { name: 'POST /leave' } });
     sleep(15);
     return;
@@ -150,7 +179,7 @@ export function mutate(data) {
   });
 
   const leaveL = http.post(`${BASE}/api/teams/${team.id}/leave`, null, { headers: bearer(data.leader), tags: { name: 'POST /leave' } });
-  check(leaveL, { 'leader leave 200': (r) => r.status === 200 });
+  if (check(leaveL, { 'leader leave 200': (r) => r.status === 200 })) fullCycles.add(1);
 
   // ~17s hosted cycle => ~3.5 creates/min per user, below the 5/min limit
   // with margin for fixed-window boundary drift.

@@ -70,7 +70,7 @@ Target from the problem statement: **p95 < 200 ms with 100 concurrent users.**
   running create/join/leave cycles within the app's own rate limits
   (5 creates/min/user; an unpaced variant tripped 429s by design with
   zero 5xx, so the committed workload paces below the limit). Local,
-  full seed: read p95 46.29ms, 465,244/465,244 checks - including
+  full seed: read p95 45.24ms, 469,770/469,770 checks - including
   field-level read-your-write (team id/name/member_count verified after
   create, join and leave) - 0.00% failed. The field-level checks caught
   a real race: invalidation ran in an onResponse hook, which fires after
@@ -91,6 +91,38 @@ p95 = 98.86 ms (near-empty DB) and p95 = 72.3 ms (a test suite had truncated
 the seed before the run; caught and re-measured). Neither appears as a result
 anywhere. The pre-fix full-seed baseline was p95 = 372 ms
 (`baseline-fullseed-20261101-k6-summary.json`).
+
+### Failed run kept on record: hosted run #20 (aa5238f)
+
+https://github.com/Adithkp03/teamform/actions/runs/41337522593 - FAILED.
+Hot step green (hosted p95 55.49 ms, 153,878 requests, 0.000% failed). The
+mixed step crossed `http_req_failed rate<0.01`: 1,796 of 1,798 `create 201`
+checks failed while every read and field-level read-your-write check passed
+(hosted mixed read p95 92.74 ms). Root cause was in the workload script,
+not the app, established by logged status/body (not inferred):
+
+- Initial failure class: `409 already_in_team` on create. k6 does not
+  assign scenario VU ids in scenario order - the script pinned leader/
+  joiner pairs by `__VU >= 100`, but mutator VUs received ids outside
+  that range (observed 40-43), so all four shared one pair and concurrent
+  creates conflicted. (Concurrent same-user creates also surfaced the
+  app's unique-index backstop: loser gets a generic 409, no corruption.)
+- Amplification: the mutator's early returns skipped the pacing sleep, so
+  the first 409 put each VU into a no-sleep retry loop for the rest of
+  the run. Locally, mutations had never failed, so both defects were
+  invisible until the field-level checks and hosted timing exposed them.
+
+Fix (a4ba8ae, hardened in the commit that superseded it): every failure
+path is paced (no hot loop), the first failure per VU is logged with
+status+body into the job log, a failed joiner-leave leaves no orphaned
+team across iterations (per-VU stuck-team retry; leader leave transfers
+leadership, joiner leave deletes the last-member team), pairs are created
+per-VU by lazy signup with no __VU assumptions, and a `mix_full_cycles >=
+12` counter threshold makes a vacuous green impossible - a run whose
+creates all fail now fails even with a clean read p95 (validated by a
+forced-400 negative test: 4 logged failures, 0 full cycles, threshold
+crossed). Re-run with these fixes: green, 469,770/469,770 checks, 0
+failed requests, 16 full cycles, read p95 45.24 ms (local, full seed).
 
 ## Diagnosis (all steps measured)
 
