@@ -1,7 +1,12 @@
 {
-  "buildCommand": "npm run build -w @teamform/web",
-  "outputDirectory": "apps/web/dist",
-  "rewrites": [
-    { "source": "/((?!api/.*).*)", "destination": "/index.html" }
+  "version": 2,
+  "regions": ["sin1"],
+  "builds": [
+    { "src": "api/index.mjs", "use": "@vercel/node" },
+    { "src": "apps/web/package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/index.mjs" },
+    { "src": "/(.*)", "dest": "/apps/web/$1" }
   ]
 }

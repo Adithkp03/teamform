@@ -3,14 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "description": "Race-proof team formation at scale - Hack4Hack Crew Hiring Challenge 2026, PS1",
-  "workspaces": ["apps/*"],
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "migrate": "node db/migrate.mjs",
     "seed": "node db/seed.mjs",
     "dev": "npm run dev -w @teamform/api",
     "test": "npm run test -w @teamform/api",
     "build": "npm run build -w @teamform/web",
-    "chaos": "bash scripts/chaos.sh"
+    "chaos": "bash scripts/chaos.sh",
+    "build:serverless": "esbuild apps/api/src/serverless.ts --bundle --platform=node --format=esm --target=node20 --outfile=api/index.mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\""
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }
