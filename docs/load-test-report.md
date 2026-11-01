@@ -14,13 +14,23 @@ Target from the problem statement: **p95 < 200 ms with 100 concurrent users.**
   requests, 0 failures, all 100 streams alive, 12/12 write probes delivered
   to listeners on both instances (51-955 ms after write at a 1 s poll).
   Raw: `docs/loadtest-local/multi-instance-postfix-20261101.json`.
-- **GitHub-hosted CI runner: open.** The `Load test (CI stack)` workflow runs
-  the same k6 suite on every push. Pre-fix runs measured 747 ms and 1,120 ms
-  (0 failures). The first post-fix run (#6, commit `0ad0acb`) failed in 1m32s;
-  the cause is **not yet established** (the token available to this project
-  lacks Actions log scope). The workflow now publishes k6 metrics and dataset
-  counts to the job summary on every run, so each push self-reports; the
-  hosted-runner result will be recorded here once read.
+- **GitHub-hosted CI runner: NOT MET, p95 = 378 ms** (run #10, commit
+  `1d0e133`, 17,838 requests, 295 req/s, 0 failed requests; artifact
+  `k6-ci-results`). Pre-fix runs measured 747/1,120 ms. The hosted runner is
+  consistently ~2.7x slower than the local sandbox on identical code and
+  seed (139 ms local vs 378 ms CI); the cause is an unproven environment
+  hypothesis (runner CPU class), not investigated further because the local
+  reproduction is the repeatable standard and production load testing is
+  not permitted. **Tooling finding:** k6 as installed by
+  `grafana/setup-k6-action` (v1.x) exits 0 even when a threshold is tainted,
+  so runs #5-#10 showed green while #10 had actually violated p(95)<200
+  (verified from the artifact's `k6-output.txt` and summary JSON, where
+  `thresholds["p(95)<200"] = true`). The workflow now has an explicit
+  gate step that fails the job on any tainted threshold - expect the next
+  hosted run to go red honestly until the runner meets 200 ms. Run #6's
+  earlier failure was separately explained from its job log: a genuine
+  SSE storm-test flake (read loop stopped at 10 ids), fixed in `7531164`
+  and confirmed green in CI #38.
 - **Production measurement: not permitted by the host.** Vercel allows load
   testing only on Enterprise plans
   (<https://vercel.com/kb/guide/what-s-vercel-s-policy-regarding-load-testing-deployments>);

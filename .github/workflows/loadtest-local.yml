@@ -62,7 +62,7 @@ jobs:
                 ["avg", m.http_req_duration?.avg + "ms"],
                 ["max", m.http_req_duration?.max + "ms"],
                 ["requests", m.http_reqs?.count],
-                ["failed", m.http_req_failed?.fails ?? 0],
+                ["failed_req_rate", ((m.http_req_failed?.value ?? 0) * 100).toFixed(3) + "%"],
               ];
               const lines = ["## k6 board load result (CI stack, 100 VUs / 60s, full seed)", "", "| metric | value |", "|---|---|",
                 ...rows.map(r => "| " + r[0] + " | " + r[1] + " |")];
@@ -70,6 +70,20 @@ jobs:
             } catch (e) {
               require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, "## k6 summary parse failed\n```\n" + e.message + "\n```\n");
             }'
+      # k6 v1.x can exit 0 even when a threshold is tainted (observed: run #10
+      # green with p95=378ms vs p(95)<200). The summary JSON records the ground
+      # truth - fail the job on any tainted threshold explicitly.
+      - name: Enforce k6 thresholds
+        run: |
+          node -e '
+            const s = require("./loadtest/ci-k6-summary.json");
+            const bad = [];
+            for (const [metric, m] of Object.entries(s.metrics ?? {}))
+              for (const [th, tainted] of Object.entries(m.thresholds ?? {}))
+                if (tainted) bad.push(metric + " " + th);
+            if (bad.length) { console.error("Threshold violations:\n" + bad.join("\n")); process.exit(1); }
+            console.log("All thresholds OK");
+          '
       - uses: actions/upload-artifact@v4
         if: always()
         with:
