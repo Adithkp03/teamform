@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: grafana/setup-k6-action@v1
-      - name: Board endpoint: 100 concurrent users, p95 < 200ms
+      - name: 'Board endpoint: 100 concurrent users, p95 < 200ms'
         run: k6 run -e BASE_URL=${{ inputs.target_url }} -e TOKEN='${{ inputs.seed_token }}' --out json=loadtest/results.json loadtest/board.k6.js
       - uses: actions/upload-artifact@v4
         with: { name: k6-results, path: loadtest/results.json }
