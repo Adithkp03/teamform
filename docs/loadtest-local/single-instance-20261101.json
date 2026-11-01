@@ -1,0 +1,30 @@
+{
+  "sse_target": 100,
+  "notes": [],
+  "users": 10,
+  "sse_connected": 100,
+  "sse_failed": 0,
+  "connect_ms": 249,
+  "propagation_samples": [
+    {
+      "write_status": 201,
+      "propagation_ms": 599
+    },
+    {
+      "write_status": 201,
+      "propagation_ms": 603
+    },
+    {
+      "write_status": 201,
+      "propagation_ms": 512
+    }
+  ],
+  "k6_tail": [
+    "     checks.........................: 100.00% 12659 out of 12659",
+    "   ✗ http_req_duration..............: avg=474.9ms  min=226.06ms med=520.38ms max=718.29ms p(90)=561.41ms p(95)=577.16ms",
+    "   ✓ http_req_failed................: 0.00%   0 out of 12659",
+    "     http_reqs......................: 12659   210.239393/s",
+    "time=\"2026-11-01T21:36:55+05:30\" level=error msg=\"thresholds on metrics 'http_req_duration' have been crossed\""
+  ],
+  "sse_still_connected_at_end": 100
+}

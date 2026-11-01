@@ -2,72 +2,90 @@
 
 Target from the problem statement: **p95 < 200 ms with 100 concurrent users.**
 
-## Status
+## Status, stated plainly
 
-- **Deployed target (the number that counts): PENDING deployment.** It will be
-  measured with k6 (`loadtest/board.k6.js`, thresholds `p(95)<200`) from a
-  GitHub Actions runner, reporting runner geography, warm/cold state, error
-  rate, and repeated runs.
-- **Local baseline: measured 2026-11-01, raw output preserved in
-  `docs/loadtest-local/`.** Local numbers characterize the code and queries on
-  a weak shared sandbox; they are NOT a prediction of production latency.
+- **Production measurement: not permitted by the host.** Vercel's policy
+  allows load testing only on Enterprise plans
+  (<https://vercel.com/kb/guide/what-s-vercel-s-policy-regarding-load-testing-deployments>);
+  an unannounced 100-VU burst against the Hobby deployment was auto-mitigated
+  by the Vercel Security Checkpoint (99.94% of requests rejected at the edge -
+  that measures rejected edge traffic, not app throughput). There is no
+  supported way to load test the live URL on this plan, so **no production p95
+  is claimed anywhere in this submission**.
+- **Local / CI measurement: reproducible, seeded, raw artifacts committed.**
+  All numbers below are against the full seed (10,003 users, 2,000 teams,
+  6,000 members). They characterize the code; they are not a production
+  guarantee.
 
-## Local measurements
+## Correction
 
-Environment: sandboxed container, 2 shared vCPUs, Node 22 running via tsx
-(uncompiled), PostgreSQL 18 embedded on the same box. Dataset: exactly 10,000
-seed users (+3 clearly labeled `(demo)` fixtures), 2,000 teams, 4,966
-memberships. Tool: autocannon, JSON output in `docs/loadtest-local/`.
+An earlier chat update quoted a local k6 PASS (p95 = 98.86 ms). That run used
+a **near-empty local database** and does not represent the seeded dataset. It
+is superseded by the full-seed measurements below and appears nowhere in the
+repo docs.
 
-| Run | Requests | Avg | p50 | p97.5 | p99 | Errors |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 connection, 10s | 1.3k (~131 rps) | 7.2 ms | 7 ms | 9 ms | 14 ms | 0 |
-| 100 connections, 30s | 8k (~259 rps) | 383.9 ms | 378 ms | 427 ms | 435 ms | 0 |
+## Environment
 
-(autocannon's summary reports p97.5/p99 rather than p95; the deployed k6 run
-reports exact p95. p50 vs p97.5 spread is small: 378 vs 427 ms.)
+Sandboxed container, 2 shared vCPUs, Node 22 via tsx (uncompiled), PostgreSQL
+16 embedded on the same box, k6 v0.55.0. Dataset: 10,003 users, 2,000 teams,
+6,000 members (`db/seed-sql.mjs`). Query cost is not the bottleneck: EXPLAIN
+ANALYZE on the full seed shows the board teams query at 4.5 ms and the people
+query at 2.4 ms (existing partial index `teams_board_idx`). The sandbox CPU
+(2 shared vCPUs running API + Postgres + k6 + 100 SSE streams) is the
+limiting factor in every measurement below; see
+`docs/loadtest-local/cpu-during-load.txt`.
 
-## What limits local throughput (measured)
+## Measurements (all: 100 VUs, no think time, 60 s, `loadtest/board.k6.js`)
 
-Run conditions: API, Postgres, and the autocannon client all co-located on one
-2-vCPU sandbox; PG pool of 5; seeded 10,000 users / 2,000 teams.
+| Scenario | Requests | Failures | p95 | Notes |
+| --- | --- | --- | --- | --- |
+| Board only, near-empty DB (superseded) | 68,876 | 0 | 98.9 ms | kept only to explain the correction above |
+| Board + 100 SSE streams, one API instance, full seed | 12,659 | 0 | 577 ms | raw: `single-instance-20261101.json` |
+| Board + 100 SSE streams (50+50), TWO API instances, full seed | 16,493 | 0 | 401 ms | raw: `multi-instance-20261101.json` |
 
-1. **Query cost is small in isolation.** EXPLAIN ANALYZE on the seeded data:
-   board teams query 4.1 ms, people query 2.6 ms (partial index on
-   `looking_for_members`).
-2. **Per-request floor is 7.2 ms** (1-connection run, avg).
-3. **At 100 connections the box is CPU-saturated.** Measured during steady load
-   (top snapshot, 3 s in): %Cpu 96.7 us / 3.3 sy / 0.0 id; five Postgres
-   backend processes at 26-47% each (~165% combined), the Node API process at
-   ~33%, the autocannon client at ~7%. Load average 1.9 on 2 cores.
-   Little's law is consistent with the measurement (100 concurrent / 258.8 rps
-   = 386 ms mean residence vs 384 ms measured) but says nothing about cause.
-4. **What this does and does not show.** The database backends, not the API
-   process, consume the majority of CPU under this load, so the earlier
-   "single Node process CPU-bound" hypothesis is refuted by measurement. The
-   split between SQL execution, per-connection backend overhead (no pooler in
-   this setup), and planning cost is not resolved here - that needs database
-   profiling (e.g. pg_stat_statements), which this sandbox does not have
-   installed. The deployed k6 run (client off-box, real instance sizing) is the
-   measurement that counts for the p95 < 200 ms requirement; these local
-   numbers only reproduce the invariant behavior (0 errors, 3k requests/10s)
-   and give the 1-connection floor.
+The p95 < 200 ms target is **not met in this sandbox** under full-seed
+coexistence load. The limiting factor is sandbox CPU, not query cost (above)
+and not connection count (0 failures in every run). The CI workflow
+`.github/workflows/loadtest-local.yml` reproduces the full-seed seeded run on
+every push on a 4-vCPU GitHub runner (API + Postgres service + k6 on the same
+runner) and uploads the raw k6 summary as an artifact; its result, not this
+sandbox, is the current best local-topology number.
 
-Expected production behavior, to be confirmed by the deployed run: serverless
-instances spread concurrency and a managed Postgres is better provisioned than
-this sandbox, so per-request latency should approach the 1-connection floor
-plus network RTT to the database. If the deployed p95 misses 200 ms, the fixes
-in order: co-locate DB and function region, connection pooling (PgBouncer /
-Supabase pooler), shorter board payload, and a materialized board table.
+## Realtime under load (SSE, poll mode)
+
+Poll mode uses one **shared fleet ticker per API process**: a single interval
+does one dispatch transaction (serialized across processes by a
+transaction-scoped advisory lock), one events read from the minimum open
+cursor, and one batched leadership lookup for all connected clients; each
+client's work is in-memory filtering plus a socket write. This replaced a
+per-client poll that exhausted the 5-connection pool at ~100 concurrent
+streams (measured: 5 s pool-queue timeouts, write 500s). Multi-instance note:
+the ticker is per process, so N serverless instances cost N x ~3 queries per
+second against Postgres, not 1; the advisory lock prevents duplicate dispatch
+across instances, and per-client cursors keep delivery correct per instance.
+
+Multi-instance measurement (2 processes, same DB, 100 SSE streams total,
+k6 100 VUs against instance A): 12/12 team-create probes were delivered to
+listeners on **both** instances, writes alternating A/B. Delivery latency
+after write completion: min 31 ms, median ~500 ms, max 1,203 ms at a 1 s poll
+interval. 0 missed events, 0 failed writes, all 100 streams alive at the end.
+Raw: `docs/loadtest-local/multi-instance-20261101.json`.
+
+Correctness properties covered by tests (`apps/api/test/sse.test.ts`):
+leader-only visibility of join_requests events re-evaluated every interval,
+Last-Event-ID resume, `sync` forced when the cursor falls behind pruning, and
+stream rotation before the serverless max duration.
 
 ## Reproduce
 
 ```bash
-docker compose up -d db api && node db/seed.mjs   # 10,000 users, 2,000 teams
-TOKEN=$(curl -s -X POST localhost:3000/api/auth/dev-login -H 'content-type: application/json' \
-  -d '{"display_name":"LT"}' | jq -r .token)
-npx autocannon -c 1   -d 10 --json -H "authorization=Bearer $TOKEN" http://localhost:3000/api/board
-npx autocannon -c 100 -d 30 --json -H "authorization=Bearer $TOKEN" http://localhost:3000/api/board
-# deployed (exact p95):
-k6 run -e BASE_URL=https://<deployed> -e TOKEN=<jwt> loadtest/board.k6.js
+docker compose up -d db api && node db/seed-sql.mjs   # 10,003 users, 2,000 teams
+TOKEN=$(curl -s -X POST localhost:3000/api/auth/signup -H 'content-type: application/json' \
+  -d '{"email":"lt@example.com","password":"load-pass-1","display_name":"LT"}' | jq -r .token)
+k6 run -e BASE_URL=http://localhost:3000 -e TOKEN=$TOKEN loadtest/board.k6.js
 ```
+
+For an external target use the guarded manual workflow
+`.github/workflows/loadtest.yml`: it refuses Vercel hosts outright (vendor
+policy above) and requires typing CONFIRMED for any other external host after
+verifying the host permits load testing.

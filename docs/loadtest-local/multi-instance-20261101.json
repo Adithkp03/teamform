@@ -1,0 +1,94 @@
+{
+  "users": 10,
+  "sse": {
+    "a": 50,
+    "b": 50,
+    "failed": 0,
+    "connect_ms": 250
+  },
+  "probes": [
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 988,
+      "deliver_b_ms": 447
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 509,
+      "deliver_b_ms": 928
+    },
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 346,
+      "deliver_b_ms": 720
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 1058,
+      "deliver_b_ms": 454
+    },
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 795,
+      "deliver_b_ms": 158
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 519,
+      "deliver_b_ms": 853
+    },
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 403,
+      "deliver_b_ms": 695
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 1203,
+      "deliver_b_ms": 493
+    },
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 808,
+      "deliver_b_ms": 31
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 484,
+      "deliver_b_ms": 714
+    },
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 745,
+      "deliver_b_ms": 457
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 493,
+      "deliver_b_ms": 203
+    }
+  ],
+  "k6_tail": [
+    "     checks.........................: 100.00% 16493 out of 16493",
+    "   ✗ http_req_duration..............: avg=364.12ms min=23.33ms med=361.54ms max=986.02ms p(90)=390.18ms p(95)=401.05ms",
+    "   ✓ http_req_failed................: 0.00%   0 out of 16493",
+    "     http_reqs......................: 16493   273.872497/s",
+    "time=\"2026-11-01T21:47:28+05:30\" level=error msg=\"thresholds on metrics 'http_req_duration' have been crossed\""
+  ],
+  "sse_end": {
+    "a": 50,
+    "b": 50
+  }
+}

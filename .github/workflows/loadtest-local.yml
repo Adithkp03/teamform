@@ -1,0 +1,52 @@
+name: Load test (CI stack)
+on: [push, workflow_dispatch]
+jobs:
+  k6-local:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: teamform_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/teamform_test
+      JWT_SECRET: ci-loadtest-secret
+      EVENTS_POLL_MS: '1000'
+      REALTIME_MODE: poll
+      ALLOW_DEV_LOGIN: 'false'
+      PORT: '3000'
+      PG_POOL_MAX: '10'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Migrate + seed (10,000 users / 2,000 teams)
+        run: |
+          npm run migrate
+          node db/seed-sql.mjs
+      - name: Start API (waits for health)
+        run: |
+          nohup npx tsx apps/api/src/server.ts > api-ci.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:3000/api/health && break || sleep 1; done
+      - name: Sign up the load user
+        run: |
+          TOKEN=$(curl -sf -X POST localhost:3000/api/auth/signup -H 'content-type: application/json' \
+            -d '{"email":"ci-load@example.com","password":"ci-load-pass-1","display_name":"CI Load"}' | jq -r .token)
+          test -n "$TOKEN" && test "$TOKEN" != "null"
+          echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
+      - uses: grafana/setup-k6-action@v1
+      - name: 'Board endpoint: 100 concurrent users, threshold p95 < 200ms'
+        run: k6 run -e BASE_URL=http://localhost:3000 -e "TOKEN=$TOKEN" --summary-export loadtest/ci-k6-summary.json loadtest/board.k6.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-ci-results
+          path: |
+            loadtest/ci-k6-summary.json
+            api-ci.log
