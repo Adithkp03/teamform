@@ -240,3 +240,71 @@ describe('SSE poll mode cursor reliability (production mode)', () => {
     expect(buf.replace(/ /g, '')).toContain('"t":"team_members","op":"INSERT"');
   }, 12_000);
 });
+
+/** Sign up over HTTP so the access token carries a session id (sid). */
+async function signupHttp(email: string): Promise<{ token: string; refresh_token: string; user_id: string }> {
+  const res = await fetch(`${base}/api/auth/signup`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password: 'password123', display_name: 'SSE Session User' }),
+  });
+  if (!res.ok) throw new Error(`signup failed: ${res.status}`);
+  return res.json();
+}
+
+/** Read an SSE response until it ends or the deadline passes. */
+async function readUntilEnd(res: Response, ms: number): Promise<{ done: boolean; text: string }> {
+  const reader = res.body!.getReader();
+  const dec = new TextDecoder();
+  let text = '';
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    const r = await Promise.race([
+      reader.read(),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 500)),
+    ]);
+    if (r === 'timeout') continue;
+    if (r.done) return { done: true, text };
+    text += dec.decode(r.value, { stream: true });
+  }
+  return { done: false, text };
+}
+
+describe('SSE session revocation', () => {
+  test('logout ends the open stream within a few poll intervals', async () => {
+    const s = await signupHttp(`sse-logout-${crypto.randomUUID()}@example.com`);
+    const res = await fetch(`${base}/api/events`, { headers: { authorization: `Bearer ${s.token}` } });
+    expect(res.status).toBe(200);
+    const lo = await fetch(`${base}/api/auth/logout`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refresh_token: s.refresh_token }),
+    });
+    expect(lo.ok).toBe(true);
+    const { done, text } = await readUntilEnd(res, 8000);
+    expect(done).toBe(true);
+    expect(text).toContain('session_revoked');
+  }, 15000);
+
+  test('revoking one session ends only that stream; the other session still works', async () => {
+    const email = `sse-two-dev-${crypto.randomUUID()}@example.com`;
+    const a = await signupHttp(email);
+    // second device: log in again for an independent session
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password: 'password123' }),
+    });
+    const b = await login.json();
+    const streamA = await fetch(`${base}/api/events`, { headers: { authorization: `Bearer ${a.token}` } });
+    expect(streamA.status).toBe(200);
+    // log out device A
+    await fetch(`${base}/api/auth/logout`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refresh_token: a.refresh_token }),
+    });
+    const endA = await readUntilEnd(streamA, 8000);
+    expect(endA.done).toBe(true);
+    expect(endA.text).toContain('session_revoked');
+    // device B's session is untouched
+    const me = await fetch(`${base}/api/me`, { headers: { authorization: `Bearer ${b.token}` } });
+    expect(me.status).toBe(200);
+  }, 15000);
+});

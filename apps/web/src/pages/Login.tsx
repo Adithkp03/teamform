@@ -22,9 +22,16 @@ export default function Login() {
     setBusy(true);
     try {
       if (mode === 'forgot') {
-        await api('/api/auth/forgot-password', { method: 'POST', body: { email } });
-        toast('If an account exists for that email, a reset link is on its way.');
-        setMode('login');
+        try {
+          await api('/api/auth/forgot-password', { method: 'POST', body: { email } });
+          toast('If an account exists for that email, a reset link is on its way.');
+          setMode('login');
+        } catch (err: any) {
+          // No generic "on its way" when the deployment cannot send email.
+          toast(err.code === 'email_not_configured'
+            ? 'Email delivery is not configured on this deployment, so reset links cannot be sent yet.'
+            : err.message, 'error');
+        }
         return;
       }
       const path = mode === 'dev' ? '/api/auth/dev-login' : `/api/auth/${mode}`;

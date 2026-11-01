@@ -114,7 +114,7 @@ describe('board cache', () => {
     const u = await makeUser('A');
     await createTeam(u.token, 'ExpiryTeam');
     expect((await board(u.token)).statusCode).toBe(200); // warm
-    const expired = signToken(u.id, '0s');
+    const expired = signToken(u.id, undefined, '0s');
     await sleep(1100); // past exp AND past TTL so only auth can gate
     const r = await board(expired);
     expect(r.statusCode).toBe(401);

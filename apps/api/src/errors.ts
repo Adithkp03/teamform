@@ -16,4 +16,5 @@ export const errors = {
   gone: (m: string) => new ApiError(410, 'gone', m),
   tooMany: (m = 'Rate limit exceeded, slow down') => new ApiError(429, 'rate_limited', m),
   badRequest: (m: string) => new ApiError(400, 'bad_request', m),
+  unavailable: (code: string, m: string) => new ApiError(503, code, m),
 };

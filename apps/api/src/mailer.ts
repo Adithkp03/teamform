@@ -25,6 +25,9 @@ export interface OutboundMail {
 const PROVIDER = process.env.MAIL_PROVIDER
   ?? (process.env.VERCEL || process.env.NODE_ENV === 'production' ? 'none' : 'log');
 
+/** False when this deployment cannot deliver email; routes must say so. */
+export const mailConfigured = PROVIDER !== 'none';
+
 const outbox: OutboundMail[] = [];
 const MAX_OUTBOX = 64;
 
@@ -36,7 +39,8 @@ export function mailOutbox(): OutboundMail[] {
 export async function sendAuthMail(to: string, kind: 'verify' | 'reset', url: string): Promise<void> {
   if (PROVIDER === 'none') {
     // Never log the URL: it carries a bearer-equivalent token.
-    console.log(`[mailer:none] ${kind} mail for ${to} dropped - no mail provider configured`);
+    // No recipient either: production logs carry no addresses or tokens.
+    console.log(`[mailer:none] ${kind} mail dropped - no provider configured`);
     return;
   }
   if (outbox.length >= MAX_OUTBOX) outbox.shift();

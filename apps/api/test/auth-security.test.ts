@@ -63,7 +63,7 @@ describe('credential auth', () => {
 describe('JWT hardening', () => {
   test('expired token is rejected', async () => {
     const u = await makeUser();
-    const expired = signToken(u.id, -10);
+    const expired = signToken(u.id, undefined, -10);
     const res = await app.inject({ method: 'GET', url: '/api/me', headers: auth(expired) });
     expect(res.statusCode).toBe(401);
   });

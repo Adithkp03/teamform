@@ -71,7 +71,11 @@ export default function Profile() {
             <button type="button" className="mt-2 text-xs text-accent hover:underline"
               onClick={async () => {
                 try { await api('/api/auth/resend-verification', { method: 'POST', token, body: {} }); toast('Verification email sent'); }
-                catch (e: any) { toast(e.message, 'error'); }
+                catch (e: any) {
+                  toast(e.code === 'email_not_configured'
+                    ? 'Email delivery is not configured on this deployment, so verification emails cannot be sent yet.'
+                    : e.message, 'error');
+                }
               }}>
               Resend verification email
             </button>

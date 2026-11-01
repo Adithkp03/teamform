@@ -155,7 +155,7 @@ test('verify-email: token sets email_verified, resend reports already verified',
 
 test('expired access token is rejected with 401', async () => {
   const u = await makeUser('Exp');
-  const short = signToken(u.id, '1ms');
+  const short = signToken(u.id, undefined, '1ms');
   await new Promise((r) => setTimeout(r, 20));
   const me = await app.inject({ method: 'GET', url: '/api/me', headers: auth(short) });
   expect(me.statusCode).toBe(401);

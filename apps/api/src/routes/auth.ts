@@ -1,3 +1,4 @@
+import { mailConfigured } from '../mailer.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
@@ -55,7 +56,8 @@ export default async function authRoutes(app: FastifyInstance) {
     }
     const verifyToken = await issueActionToken(id, 'verify');
     await sendAuthMail(body.email.toLowerCase(), 'verify', authMailUrl('verify', verifyToken));
-    return { token: signToken(id), refresh_token: await issueRefreshToken(id), user_id: id };
+    const session = await issueRefreshToken(id);
+    return { token: signToken(id, session.id), refresh_token: session.token, user_id: id };
   });
 
   app.post('/api/auth/login', async (req) => {
@@ -69,7 +71,8 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!rows.length || !(await bcrypt.compare(body.password, rows[0].password_hash))) {
       throw errors.unauthorized();
     }
-    return { token: signToken(rows[0].id), refresh_token: await issueRefreshToken(rows[0].id), user_id: rows[0].id };
+    const session = await issueRefreshToken(rows[0].id);
+    return { token: signToken(rows[0].id, session.id), refresh_token: session.token, user_id: rows[0].id };
   });
 
   // Rotation issues a new access token + refresh token and revokes the old
@@ -78,8 +81,8 @@ export default async function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/refresh', async (req) => {
     const body = parse(z.object({ refresh_token: z.string().min(1).max(128) }), req.body);
     await rateLimit(`auth:${req.ip}`, 30, 60);
-    const { userId, token } = await rotateRefreshToken(body.refresh_token);
-    return { token: signToken(userId), refresh_token: token, user_id: userId };
+    const { userId, token, id } = await rotateRefreshToken(body.refresh_token);
+    return { token: signToken(userId, id), refresh_token: token, user_id: userId };
   });
 
   // Logout revokes the refresh session. The current access token remains
@@ -95,6 +98,7 @@ export default async function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/forgot-password', async (req) => {
     const body = parse(z.object({ email: z.string().trim().email().max(254) }), req.body);
     await rateLimit(`forgot:${req.ip}`, 5, 60);
+    if (!mailConfigured) throw errors.unavailable('email_not_configured', 'Email delivery is not configured on this deployment');
     const { rows } = await pool.query(
       `SELECT id, email FROM profiles WHERE lower(email) = lower($1) AND password_hash IS NOT NULL`,
       [body.email],
@@ -129,6 +133,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   app.post('/api/auth/resend-verification', { preHandler: authenticate }, async (req: any) => {
     await rateLimit(`verify:${req.userId}`, 3, 60);
+    if (!mailConfigured) throw errors.unavailable('email_not_configured', 'Email delivery is not configured on this deployment');
     const { rows } = await pool.query(`SELECT email, email_verified_at FROM profiles WHERE id = $1`, [req.userId]);
     if (!rows[0]?.email) throw errors.conflict('no_email', 'This account has no email address');
     if (rows[0].email_verified_at) return { ok: true, already_verified: true };

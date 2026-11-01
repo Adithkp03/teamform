@@ -12,15 +12,19 @@ const secret = () => {
 // Access tokens are short-lived and stateless (no DB read on the hot path).
 // Revocation acts on refresh tokens: logout/reset revoke the refresh side and
 // the access side expires within ACCESS_TOKEN_TTL.
-export function signToken(userId: string, expiresIn: SignOptions['expiresIn'] = '15m'): string {
-  return jwt.sign({ sub: userId, iss: 'teamform-api' }, secret(), { expiresIn });
+// sid binds the access token to the refresh-token row (session) it was
+// issued with, so an open SSE stream can re-check its session each poll:
+// logout, password reset or replay lockout then stop the stream within one
+// interval instead of up to the access TTL.
+export function signToken(userId: string, sid?: string, expiresIn: SignOptions['expiresIn'] = '15m'): string {
+  return jwt.sign({ sub: userId, iss: 'teamform-api', ...(sid ? { sid } : {}) }, secret(), { expiresIn });
 }
 
-export function verifyToken(token: string): string {
+export function verifyToken(token: string): { userId: string; sid?: string } {
   try {
     const payload = jwt.verify(token, secret(), { issuer: 'teamform-api' }) as jwt.JwtPayload;
     if (!payload.sub) throw new Error('no sub');
-    return payload.sub;
+    return { userId: payload.sub, sid: typeof payload.sid === 'string' ? payload.sid : undefined };
   } catch {
     throw errors.unauthorized();
   }
@@ -30,20 +34,31 @@ export function verifyToken(token: string): string {
 export async function authenticate(req: any, _reply: any) {
   const header = req.headers['authorization'] as string | undefined;
   if (!header?.startsWith('Bearer ')) throw errors.unauthorized();
-  req.userId = verifyToken(header.slice(7));
+  const v = verifyToken(header.slice(7));
+  req.userId = v.userId;
+  req.sessionId = v.sid;
 }
 
 const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
 
 /** Issue an opaque 30-day refresh token; only its SHA-256 hash is stored. */
-export async function issueRefreshToken(userId: string): Promise<string> {
+export async function issueRefreshToken(userId: string): Promise<{ token: string; id: string }> {
   const token = randomBytes(32).toString('hex');
-  await pool.query(
+  const { rows } = await pool.query(
     `INSERT INTO auth_refresh_tokens (user_id, token_hash, expires_at)
-     VALUES ($1, $2, now() + interval '30 days')`,
+     VALUES ($1, $2, now() + interval '30 days') RETURNING id`,
     [userId, hashToken(token)],
   );
-  return token;
+  return { token, id: rows[0].id };
+}
+
+/** True while the session (refresh-token row) behind an access token lives. */
+export async function isSessionValid(sid: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM auth_refresh_tokens WHERE id = $1 AND revoked_at IS NULL AND expires_at > now()`,
+    [sid],
+  );
+  return rows.length > 0;
 }
 
 export async function revokeAllRefreshTokens(userId: string): Promise<void> {
@@ -73,7 +88,7 @@ export async function revokeRefreshToken(token: string): Promise<void> {
 // get a grace window.
 const graceMs = () => Number(process.env.REFRESH_GRACE_MS ?? 10_000);
 
-export async function rotateRefreshToken(oldToken: string): Promise<{ userId: string; token: string }> {
+export async function rotateRefreshToken(oldToken: string): Promise<{ userId: string; token: string; id: string }> {
   const { rows } = await pool.query(
     `SELECT id, user_id, revoked_at, rotated_at, expires_at FROM auth_refresh_tokens WHERE token_hash = $1`,
     [hashToken(oldToken)],
@@ -83,14 +98,16 @@ export async function rotateRefreshToken(oldToken: string): Promise<{ userId: st
   if (row.revoked_at) {
     if (row.rotated_at && Date.now() - new Date(row.rotated_at).getTime() <= graceMs()) {
       // legitimate rotation race (second tab / retried response)
-      return { userId: row.user_id, token: await issueRefreshToken(row.user_id) };
+      const next = await issueRefreshToken(row.user_id);
+      return { userId: row.user_id, token: next.token, id: next.id };
     }
     await revokeAllRefreshTokens(row.user_id);
     throw errors.unauthorized();
   }
   if (new Date(row.expires_at).getTime() <= Date.now()) throw errors.unauthorized();
   await pool.query(`UPDATE auth_refresh_tokens SET revoked_at = now(), rotated_at = now() WHERE id = $1`, [row.id]);
-  return { userId: row.user_id, token: await issueRefreshToken(row.user_id) };
+  const next = await issueRefreshToken(row.user_id);
+  return { userId: row.user_id, token: next.token, id: next.id };
 }
 
 /** Single-use action token (reset: 30 min, verify: 7 days); hash stored. */

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
-import { authenticate } from '../auth.js';
+import { authenticate, isSessionValid } from '../auth.js';
 import { pool } from '../db.js';
 import { rateLimit } from '../ratelimit.js';
 
@@ -92,7 +92,15 @@ export default async function eventRoutes(app: FastifyInstance) {
       };
       client.on('notification', onNotify);
 
-      const heartbeat = setInterval(() => reply.raw.write(`: hb\n\n`), 25_000);
+      const heartbeat = setInterval(() => {
+        void (async () => {
+          if (req.sessionId && !(await isSessionValid(req.sessionId))) {
+            try { reply.raw.write(`event: sync\ndata: {"reason":"session_revoked"}\n\n`); reply.raw.end(); } catch { /* gone */ }
+            return;
+          }
+          reply.raw.write(`: hb\n\n`);
+        })();
+      }, 25_000);
       req.raw.on('close', () => {
         clearInterval(heartbeat);
         client.off('notification', onNotify);
@@ -110,7 +118,7 @@ export default async function eventRoutes(app: FastifyInstance) {
   // clients: one dispatch transaction, one events read from the minimum open
   // cursor, and one batched leadership lookup; per-client work is in-memory
   // filtering and a write. DB cost stays flat as client count grows.
-  type SseClient = { userId: string; reply: any; cursor: bigint; closed: boolean };
+  type SseClient = { userId: string; sessionId?: string; reply: any; cursor: bigint; closed: boolean };
   const clients = new Set<SseClient>();
   let ticking = false;
   let tickCount = 0;
@@ -120,6 +128,24 @@ export default async function eventRoutes(app: FastifyInstance) {
     ticking = true;
     try {
       tickCount += 1;
+      // 0) Session revocation sweep: a client whose session (refresh-token row
+      //    id, carried as the access token's sid claim) was revoked - logout,
+      //    password reset, replay lockout, revocation from another device -
+      //    stops receiving private updates within one poll interval.
+      const sids = [...new Set([...clients].filter((c) => !c.closed && c.sessionId).map((c) => c.sessionId!))];
+      if (sids.length) {
+        const { rows: validRows } = await pool.query(
+          `SELECT id FROM auth_refresh_tokens WHERE id = ANY($1::uuid[]) AND revoked_at IS NULL AND expires_at > now()`,
+          [sids]);
+        const valid = new Set(validRows.map((r) => r.id as string));
+        for (const c of [...clients]) {
+          if (c.closed || !c.sessionId || valid.has(c.sessionId)) continue;
+          try { c.reply.raw.write(`event: sync\ndata: {"reason":"session_revoked"}\n\n`); c.reply.raw.end(); } catch { /* already gone */ }
+          c.closed = true;
+          clients.delete(c);
+        }
+        if (clients.size === 0) return;
+      }
       // 1) Dispatch: assign dispatched_seq to newly committed events.
       //    Serialized across instances by a transaction-scoped advisory lock.
       const client = await pool.connect();
@@ -214,7 +240,7 @@ export default async function eventRoutes(app: FastifyInstance) {
       reply.raw.write(`event: sync\ndata: {"reason":"connected"}\n\n`);
     }
 
-    const state: SseClient = { userId, reply, cursor, closed: false };
+    const state: SseClient = { userId, sessionId: req.sessionId as string | undefined, reply, cursor, closed: false };
     clients.add(state);
 
     const rotate = setTimeout(() => {
