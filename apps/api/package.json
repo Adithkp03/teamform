@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "EVENTS_POLL_MS=250 vitest run"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",

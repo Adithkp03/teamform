@@ -78,5 +78,8 @@ for (const [name, skills] of [['Asha Verma (demo)', ['react', 'typescript', 'tai
     [crypto.randomUUID(), name, skills]);
 }
 const counts = await client.query(`SELECT (SELECT count(*) FROM profiles) AS users, (SELECT count(*) FROM teams) AS teams, (SELECT count(*) FROM team_members) AS members`);
+// Mark all seed-generated change events as already dispatched (bulk
+// catch-up): pre-seed history is irrelevant to live clients.
+await client.query(`UPDATE domain_events SET dispatched_seq = nextval('domain_events_dispatch_seq') WHERE dispatched_seq IS NULL`);
 console.log('done:', counts.rows[0]);
 await client.end();

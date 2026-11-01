@@ -25,7 +25,7 @@ export function setup() {
   const email = `loadtest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@load.test`;
   const res = http.post(
     `${BASE}/api/auth/signup`,
-    JSON.stringify({ email, password: 'load-test-pass-1', name: 'Load Test' }),
+    JSON.stringify({ email, password: 'load-test-pass-1', display_name: 'Load Test' }),
     { headers: { 'content-type': 'application/json' } },
   );
   if (res.status !== 201 && res.status !== 200) {
