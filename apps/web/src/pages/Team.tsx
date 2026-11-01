@@ -118,7 +118,10 @@ export default function Team() {
             {audit.map((a: any) => (
               <li key={a.id}>
                 <time dateTime={a.created_at}>{new Date(a.created_at).toLocaleString()}</time>
-                {' - '}{a.actor_name ?? 'system'}: {a.action.replaceAll('_', ' ')}
+                {' - '}
+                {a.subject_name && a.subject_name !== a.actor_name
+                  ? `${a.subject_name}: ${a.action.replaceAll('_', ' ')} (by ${a.actor_name ?? 'system'})`
+                  : `${a.actor_name ?? 'system'}: ${a.action.replaceAll('_', ' ')}`}
               </li>
             ))}
           </ol>

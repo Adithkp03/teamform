@@ -266,6 +266,19 @@ describe('join requests', () => {
     expect(rows[0].n).toBe(0);
   });
 
+  test('audit log separates actor (accepting leader) from subject (joined member)', async () => {
+    const { leader, asker, team, request } = await teamWithRequest();
+    await app.inject({ method: 'POST', url: `/api/requests/${request.id}/accept`, headers: auth(leader.token) });
+    const audit = await app.inject({ method: 'GET', url: `/api/teams/${team.id}/audit`, headers: auth(leader.token) });
+    expect(audit.statusCode).toBe(200);
+    const joined = audit.json().audit.find((a: any) => a.action === 'member_joined');
+    expect(joined).toBeTruthy();
+    expect(joined.actor_name).toBe('Leader');
+    expect(joined.subject_name).toBe('Asker');
+    expect(joined.metadata.user_id).toBe(asker.id);
+    expect(joined.metadata.user_id).not.toBe(leader.id);
+  });
+
   test('declined request cannot later be accepted', async () => {
     const { leader, request } = await teamWithRequest();
     await app.inject({ method: 'POST', url: `/api/requests/${request.id}/decline`, headers: auth(leader.token) });

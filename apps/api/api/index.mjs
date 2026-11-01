@@ -53089,8 +53089,11 @@ async function teamRoutes(app2) {
     const member = await pool.query(`SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`, [req.params.id, req.userId]);
     if (!member.rowCount) throw errors.forbidden("Only team members can see the audit log");
     const { rows } = await pool.query(
-      `SELECT a.id, a.action, a.metadata, a.created_at, p.display_name AS actor_name
-       FROM audit_log a LEFT JOIN profiles p ON p.id = a.actor_id
+      `SELECT a.id, a.action, a.metadata, a.created_at, p.display_name AS actor_name,
+              sp.display_name AS subject_name
+       FROM audit_log a
+       LEFT JOIN profiles p ON p.id = a.actor_id
+       LEFT JOIN profiles sp ON sp.id = NULLIF(a.metadata->>'user_id', '')::uuid
        WHERE a.team_id = $1 ORDER BY a.id DESC LIMIT 200`,
       [req.params.id]
     );
