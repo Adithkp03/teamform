@@ -47,7 +47,7 @@ jobs:
         run: |
           set -o pipefail
           k6 version
-          k6 run -e BASE_URL=http://localhost:3000 -e "TOKEN=$TOKEN" --summary-export loadtest/ci-k6-summary.json loadtest/board.k6.js | tee k6-output.txt &
+          k6 run --quiet -e BASE_URL=http://localhost:3000 -e "TOKEN=$TOKEN" --summary-export loadtest/ci-k6-summary.json loadtest/board.k6.js | tee k6-output.txt &
           K6PID=$!
           # Controlled environment profiling: per-process CPU of API vs
           # Postgres vs k6 during the run. Saved into the artifact as
@@ -60,7 +60,7 @@ jobs:
       - name: "Mixed workload - 99 readers + paced team mutation churn"
         run: |
           set -o pipefail
-          k6 run -e BASE_URL=http://localhost:3000 --summary-export loadtest/ci-k6-mix-summary.json loadtest/board-mix.k6.js | tee k6-mix-output.txt
+          k6 run --quiet -e BASE_URL=http://localhost:3000 --summary-export loadtest/ci-k6-mix-summary.json loadtest/board-mix.k6.js | tee k6-mix-output.txt
 
       - name: Dataset counts after load
         if: always()
@@ -82,6 +82,23 @@ jobs:
                 ["failed_req_rate", ((m.http_req_failed?.value ?? 0) * 100).toFixed(3) + "%"],
               ];
               const lines = ["## k6 board load result (CI stack, 100 VUs / 60s, full seed)", "", "| metric | value |", "|---|---|",
+                ...rows.map(r => "| " + r[0] + " | " + r[1] + " |")];
+              require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+            } catch (e) {
+              require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, "## k6 summary parse failed\n```\n" + e.message + "\n```\n");
+            }
+            try {
+              const m = require("./loadtest/ci-k6-mix-summary.json").metrics;
+              const board = m['http_req_duration{name:GET /api/board}'] ?? {};
+              const rows = [
+                ["read p95", board["p(95)"] + "ms"],
+                ["read p90", board["p(90)"] + "ms"],
+                ["requests", m.http_reqs?.count],
+                ["failed_req_rate", ((m.http_req_failed?.value ?? 0) * 100).toFixed(3) + "%"],
+                ["checks", m.checks ? m.checks.passes + "/" + (m.checks.passes + m.checks.fails) : "?"],
+                ["full create/join/leave cycles", m.mix_full_cycles?.count],
+              ];
+              const lines = ["## k6 mixed workload result (99 readers + 4 paced mutators / 60s, full seed)", "", "| metric | value |", "|---|---|",
                 ...rows.map(r => "| " + r[0] + " | " + r[1] + " |")];
               require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
             } catch (e) {
