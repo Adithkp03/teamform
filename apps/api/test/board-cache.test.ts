@@ -126,3 +126,18 @@ describe('board cache', () => {
     expect(boardCacheSize()).toBeLessThanOrEqual(32);
   });
 });
+
+describe('invite rotate idempotency', () => {
+  test('a retried rotate replays the same code instead of invalidating it', async () => {
+    const u = await makeUser('R');
+    const team = (await createTeam(u.token, 'RotateTeam')).json().team;
+    const key = `rot-${Date.now()}`;
+    const r1 = await app.inject({ method: 'POST', url: `/api/teams/${team.id}/invite/rotate`, headers: { ...auth(u.token), 'idempotency-key': key } });
+    const r2 = await app.inject({ method: 'POST', url: `/api/teams/${team.id}/invite/rotate`, headers: { ...auth(u.token), 'idempotency-key': key } });
+    expect(r1.statusCode).toBe(200);
+    expect(r2.statusCode).toBe(200);
+    expect(r2.json().invite_code).toBe(r1.json().invite_code);
+    const { rows } = await pool.query(`SELECT invite_code FROM teams WHERE id = $1`, [team.id]);
+    expect(rows[0].invite_code).toBe(r1.json().invite_code); // live code matches the replayed one
+  });
+});

@@ -11,7 +11,7 @@ limitation; BLOCKED = cannot be demonstrated in the available environment.
 | Leader accept/decline join requests | DONE | leader-only server-side; decline -> later accept = 409 (verified on prod); audit shows actor vs subject |
 | Live looking-for-teammates board | DONE | teams + people sides, SSE-driven refresh |
 | Race-proof: 50 racers, 1 seat, 1 winner, automated test | DONE | unique constraint + serialized tx; `test/race.test.ts` 50-way race in CI |
-| Idempotency | DONE | `idempotency_keys` table, keys on all mutations, replay tests |
+| Idempotency | DONE (exact coverage) | `idempotency_keys` table; Idempotency-Key routes: create_team, join_by_code, create_join_request, invite rotate (retried rotate replays the same code). Retry-safe by state machine, not keyed: accept/decline (FOR UPDATE + 409 on non-pending), leave/remove (deletes), profile PUT (last-write-wins). Replay tests incl. rotate |
 | Realtime (SSE) | DONE | poll-mode outbox, shared fleet ticker, cross-instance delivery measured (12/12 probes, 0 missed) |
 | Security: auth | DONE | bcrypt + JWT, httpOnly-free Bearer flow, `ALLOW_DEV_LOGIN=false` in prod |
 | Security: leader-only | DONE | server-side guards + tests (non-leader accept rejected) |

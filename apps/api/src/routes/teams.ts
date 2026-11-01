@@ -222,7 +222,7 @@ export default async function teamRoutes(app: FastifyInstance) {
     });
   }));
 
-  app.post('/api/teams/:id/invite/rotate', { preHandler: authenticate }, respond(async (req: any) => {
+  app.post('/api/teams/:id/invite/rotate', { preHandler: authenticate }, idempotent('rotate_invite', async (req: any) => {
     return withTx(async (c) => {
       const { rows } = await c.query(
         `SELECT t.*, h.invite_code_ttl_minutes FROM teams t JOIN hackathons h ON h.id = t.hackathon_id WHERE t.id = $1 FOR UPDATE`,

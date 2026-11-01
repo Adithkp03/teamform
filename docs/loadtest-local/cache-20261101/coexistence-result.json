@@ -1,0 +1,93 @@
+{
+  "users": 10,
+  "sse": {
+    "a": 50,
+    "b": 50,
+    "failed": 0,
+    "connect_ms": 250
+  },
+  "probes": [
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 726,
+      "deliver_b_ms": 89
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 905,
+      "deliver_b_ms": 72
+    },
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 616,
+      "deliver_b_ms": 144
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 144,
+      "deliver_b_ms": 237
+    },
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 616,
+      "deliver_b_ms": 724
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 967,
+      "deliver_b_ms": 210
+    },
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 403,
+      "deliver_b_ms": 199
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 532,
+      "deliver_b_ms": 42
+    },
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 520,
+      "deliver_b_ms": 15
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 424,
+      "deliver_b_ms": 195
+    },
+    {
+      "write_on": "A",
+      "status": 201,
+      "deliver_a_ms": 1136,
+      "deliver_b_ms": 105
+    },
+    {
+      "write_on": "B",
+      "status": 201,
+      "deliver_a_ms": 971,
+      "deliver_b_ms": 191
+    }
+  ],
+  "k6_tail": [
+    "     checks.........................: 100.00% 269098 out of 269098",
+    "   ✓ http_req_duration..............: avg=22.25ms min=449.7µs  med=19.24ms max=886.85ms p(90)=26.55ms p(95)=31.87ms ",
+    "   ✓ http_req_failed................: 0.00%   0 out of 269098",
+    "     http_reqs......................: 269098  4481.257424/s"
+  ],
+  "sse_end": {
+    "a": 50,
+    "b": 50
+  }
+}
