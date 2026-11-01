@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "bundle": "npx esbuild src/serverless.ts --bundle --platform=node --format=esm --target=node20 --outfile=api/[...path].mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "bundle": "npx esbuild src/serverless.ts --bundle --platform=node --format=esm --target=node20 --outfile=api/index.mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "test": "EVENTS_POLL_MS=250 vitest run"
   },
   "dependencies": {
