@@ -24,8 +24,8 @@ jobs:
         run: VITE_API_URL=http://localhost:3100 npm run build -w @teamform/web
       # Playwright's webServer starts the API (tsx) and vite preview; global
       # setup migrates and seeds a clean database.
-      - name: Run browser tests (full flow, two-browser realtime, keyboard, axe)
-        run: npx playwright test
+      - name: Run browser tests against the SHIPPED serverless bundle (full flow, two-browser realtime, keyboard, axe)
+        run: E2E_BUNDLE=1 npx playwright test
       - name: Publish result
         if: always()
         run: |

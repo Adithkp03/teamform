@@ -15,7 +15,12 @@ export default defineConfig({
   use: { baseURL: 'http://localhost:3101' },
   webServer: [
     {
-      command: 'npm run start -w @teamform/api',
+      // CI ships the Vercel bundle: build it, then serve it through the
+      // adapter so e2e exercises the deployed artifact cross-origin. Locally
+      // the tsx watcher is the fast default (E2E_BUNDLE=1 opts into bundle).
+      command: process.env.E2E_BUNDLE === '1'
+        ? 'npm run bundle -w @teamform/api && node scripts/serve-bundle.mjs'
+        : 'npm run start -w @teamform/api',
       env: {
         DATABASE_URL: DB,
         JWT_SECRET: 'e2e-secret',
