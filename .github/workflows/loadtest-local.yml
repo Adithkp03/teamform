@@ -57,12 +57,12 @@ jobs:
             try {
               const m = require("./loadtest/ci-k6-summary.json").metrics;
               const rows = [
-                ["p95", m.http_req_duration?.values?.["p(95)"] + "ms"],
-                ["p90", m.http_req_duration?.values?.["p(90)"] + "ms"],
-                ["avg", m.http_req_duration?.values?.avg + "ms"],
-                ["max", m.http_req_duration?.values?.max + "ms"],
-                ["requests", m.http_reqs?.values?.count],
-                ["failed", m.http_req_failed?.values?.fails ?? m.http_req_failed?.values?.passes],
+                ["p95", m.http_req_duration?.["p(95)"] + "ms"],
+                ["p90", m.http_req_duration?.["p(90)"] + "ms"],
+                ["avg", m.http_req_duration?.avg + "ms"],
+                ["max", m.http_req_duration?.max + "ms"],
+                ["requests", m.http_reqs?.count],
+                ["failed", m.http_req_failed?.fails ?? 0],
               ];
               const lines = ["## k6 board load result (CI stack, 100 VUs / 60s, full seed)", "", "| metric | value |", "|---|---|",
                 ...rows.map(r => "| " + r[0] + " | " + r[1] + " |")];
