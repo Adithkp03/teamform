@@ -175,8 +175,8 @@ describe('SSE poll mode cursor reliability (production mode)', () => {
       const reader = res.body!.getReader();
       const dec = new TextDecoder();
       let buf = '';
-      const deadline = Date.now() + 8000;
-      while (Date.now() < deadline && collected.length < 10) {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline && collected.length < 30) {
         const { done, value } = await reader.read();
         if (done) break;
         buf += dec.decode(value ?? new Uint8Array(), { stream: true });
