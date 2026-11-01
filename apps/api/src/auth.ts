@@ -173,13 +173,22 @@ export async function rotateRefreshToken(oldToken: string): Promise<{ userId: st
     };
     if (row.revoked_at) {
       if (row.rotated_at && Date.now() - new Date(row.rotated_at).getTime() <= graceMs()) {
-        // legitimate rotation race: rotate again, same family. The window is
-        // anchored at THIS token's rotated_at - fixed, never rolling.
-        const next = await mintInFamily();
-        await client.query('COMMIT');
-        return { userId: row.user_id, token: next.token, id: next.id, familyId };
+        // Legitimate rotation race: rotate again, same family - but only while
+        // the family is still ALIVE. Logout/reset/replay-kill revoke every
+        // family member; a grace-window replay of a rotated token must not
+        // resurrect a dead family (that would let a session survive logout).
+        const { rows: live } = await client.query(
+          `SELECT 1 FROM auth_refresh_tokens WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL LIMIT 1`,
+          [familyId],
+        );
+        if (live.length) {
+          // The window is anchored at THIS token's rotated_at - fixed, never rolling.
+          const next = await mintInFamily();
+          await client.query('COMMIT');
+          return { userId: row.user_id, token: next.token, id: next.id, familyId };
+        }
       }
-      // replay after the window: kill the whole family (RFC 9700 reuse detection)
+      // replay after the window or into a dead family: kill the whole family (RFC 9700 reuse detection)
       await client.query(
         `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
         [familyId],

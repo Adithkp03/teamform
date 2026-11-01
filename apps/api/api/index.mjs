@@ -52841,9 +52841,15 @@ async function rotateRefreshToken(oldToken) {
     };
     if (row.revoked_at) {
       if (row.rotated_at && Date.now() - new Date(row.rotated_at).getTime() <= graceMs()) {
-        const next2 = await mintInFamily();
-        await client.query("COMMIT");
-        return { userId: row.user_id, token: next2.token, id: next2.id, familyId };
+        const { rows: live } = await client.query(
+          `SELECT 1 FROM auth_refresh_tokens WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL LIMIT 1`,
+          [familyId]
+        );
+        if (live.length) {
+          const next2 = await mintInFamily();
+          await client.query("COMMIT");
+          return { userId: row.user_id, token: next2.token, id: next2.id, familyId };
+        }
       }
       await client.query(
         `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,

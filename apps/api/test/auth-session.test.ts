@@ -266,3 +266,20 @@ test('logout racing rotation is atomic: no surviving token afterwards', async ()
   }
   expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } })).statusCode).toBe(401);
 });
+
+test('logout after rotation kills the family: a grace replay cannot resurrect it', async () => {
+  const prev = process.env.REFRESH_GRACE_MS;
+  process.env.REFRESH_GRACE_MS = '30000';
+  try {
+    const s = await signup('deadfam@x.dev');
+    const r1 = s.json().refresh_token;
+    // rotation wins first, then an explicit logout - deterministic order
+    const r2 = (await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } })).json().refresh_token;
+    expect((await app.inject({ method: 'POST', url: '/api/auth/logout', payload: { refresh_token: r2 } })).statusCode).toBe(200);
+    // r1 is still inside its grace window, but the family is dead: no resurrection
+    expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r2 } })).statusCode).toBe(401);
+  } finally {
+    if (prev === undefined) delete process.env.REFRESH_GRACE_MS; else process.env.REFRESH_GRACE_MS = prev;
+  }
+});

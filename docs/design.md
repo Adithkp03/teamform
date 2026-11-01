@@ -49,7 +49,10 @@ invalidates the entire token family regardless of race order.
   SAME rotated token inside its window each rotate again INSIDE the family.
   The window is anchored at that token's rotated_at - fixed, never rolling
   (tested). A grace hit never returns a stored successor: no plaintext
-  exists server-side, by design.
+  exists server-side, by design. Grace re-rotation is allowed only while the
+  family still has a live token: logout/reset/replay-kill revoke every
+  family member, and a grace replay into a dead family is rejected - a
+  session cannot be resurrected after logout (regression-tested).
 - Replay after the window revokes the ENTIRE family (RFC 9700 reuse
   detection); logout revokes the presented token's family; reset revokes
   every family of the user.
