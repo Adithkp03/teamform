@@ -1,0 +1,1 @@
+diag6-tsx-board-cte: api avg=60% peak=70% postgres avg=93% peak=107% k6 avg=0% peak=19%
