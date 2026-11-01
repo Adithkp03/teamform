@@ -13,7 +13,7 @@ const SKILLS = ['react','node','typescript','python','postgres','mongodb','redis
 const TIMEZONES = [['Asia/Kolkata', 330], ['America/New_York', -300], ['America/Los_Angeles', -480], ['Europe/London', 0], ['Europe/Berlin', 60], ['Asia/Singapore', 480], ['Australia/Sydney', 660], ['America/Sao_Paulo', -180]];
 
 function inviteCode() {
-  const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const A = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
   const bytes = crypto.getRandomValues(new Uint8Array(10));
   return Array.from(bytes, (b) => A[b % 32]).join('');
 }
@@ -28,7 +28,12 @@ function sampleSkills() {
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/teamform' });
 await client.connect();
 console.log('applying migrations...');
-await client.query(readFileSync(join(here, 'migrations', '0001_init.sql'), 'utf8'));
+try {
+  await client.query(readFileSync(join(here, 'migrations', '0001_init.sql'), 'utf8'));
+} catch (e) {
+  if (e.code !== '42P07') throw e; // tables already exist: fine for reseeding
+  console.log('schema already present, continuing');
+}
 
 let { rows } = await client.query(`SELECT id FROM hackathons WHERE slug = 'ps1'`);
 let hackathonId;
@@ -83,6 +88,10 @@ for (let i = 0; i < N_TEAMS; i++) {
     await client.query(
       `INSERT INTO team_members (team_id, hackathon_id, user_id, role) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
       [teamId, hackathonId, members[k], k === 0 ? 'leader' : 'member'],
+    );
+    await client.query(
+      `INSERT INTO audit_log (hackathon_id, team_id, actor_id, action, metadata) VALUES ($1, $2, $3, $4, $5)`,
+      [hackathonId, teamId, members[k], k === 0 ? 'team_created' : 'member_joined', JSON.stringify(k === 0 ? { name: `Team ${i + 1}` } : { via: 'invite_code' })],
     );
   }
   if (i % 200 === 0) process.stdout.write(`\r  ${i}/${N_TEAMS}`);

@@ -44,7 +44,7 @@ describe('team creation rules', () => {
     const res = await createTeam(u.token, 'Rocketship');
     expect(res.statusCode).toBe(201);
     const team = res.json().team;
-    expect(team.invite_code).toMatch(/^[A-Z2-9]{10}$/);
+    expect(team.invite_code).toMatch(/^[0-9A-HJKMNP-TV-Z]{10}$/);
     const detail = await app.inject({ method: 'GET', url: `/api/teams/${team.id}`, headers: auth(u.token) });
     expect(detail.json().members[0].role).toBe('leader');
     expect(detail.json().is_leader).toBe(true);

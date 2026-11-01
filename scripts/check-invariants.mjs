@@ -28,8 +28,11 @@ const checks = [
       SELECT 1 FROM team_members tm WHERE tm.hackathon_id = jr.hackathon_id AND tm.user_id = jr.user_id)`],
   ['every membership has a matching audit entry', `
     SELECT count(*)::int AS violations FROM team_members tm
-    WHERE NOT EXISTS (SELECT 1 FROM audit_log a WHERE a.team_id = tm.team_id AND a.metadata->>'via' IS NOT NULL
-      AND (a.metadata->>'user_id' = tm.user_id::text OR a.actor_id = tm.user_id))`],
+    WHERE NOT EXISTS (
+      SELECT 1 FROM audit_log a
+      WHERE a.team_id = tm.team_id
+        AND ((a.action = 'member_joined' AND (a.metadata->>'user_id' = tm.user_id::text OR a.actor_id = tm.user_id))
+          OR (a.action = 'team_created' AND a.actor_id = tm.user_id AND tm.role = 'leader')))`],
 ];
 
 let failed = 0;
