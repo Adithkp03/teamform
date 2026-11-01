@@ -55,6 +55,19 @@ Target from the problem statement: **p95 < 200 ms with 100 concurrent users.**
   implementation must invalidate on domain events (the dispatcher
   already sees every change) and disclose up-to-TTL staleness. This is
   the next warranted fix, chosen by the profiling above.
+- **RESOLVED on the hosted runner (5be6cae):** the 1s-TTL board cache
+  (post-commit root-scope invalidation, auth outside the cache, 32-entry
+  cap, cross-instance staleness bounded by TTL and pinned by test) took
+  the hosted run to **p95 = 76.78 ms** (run #16, 111,668 reqs, 0.000%
+  failed, max 2,243.7 ms cold-start spike; k6 v2.3.0). Local committed
+  measurement: p95 = 29.69 ms, 285,551 reqs, 0 failed, postgres ~8% CPU
+  (was 83-125% uncached). Uncached evidence preserved above (runs
+  #14/#15 red at 375-389 ms with the ci-profile.txt sampler). The cached
+  payload is public and user-independent; same-instance mutations are
+  visible immediately, cross-instance within 1s (disclosed, matching the
+  poll-mode realtime latency). Remaining workload caveat: the k6 script
+  exercises the hot read path; a warm/cold/mutation mix is tracked as
+  follow-up.
 - **Production measurement: not permitted by the host.** Vercel allows load
   testing only on Enterprise plans
   (<https://vercel.com/kb/guide/what-s-vercel-s-policy-regarding-load-testing-deployments>);
