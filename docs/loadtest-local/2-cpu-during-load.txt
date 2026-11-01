@@ -1,0 +1,16 @@
+# top snapshot during autocannon -c 100 -d 8 against local API (10k users/2k teams, 2 vCPU sandbox)
+# taken ~3s into the run, 2026-11-01T11:18:18Z
+top - 16:48:21 up 22 min,  0 users,  load average: 1.56, 1.06, 0.55
+Tasks: 113 total,   6 running, 106 sleeping,   0 stopped,   1 zombie
+%Cpu(s): 90.3 us,  9.7 sy,  0.0 ni,  0.0 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+MiB Mem :   1982.8 total,    512.0 free,    343.9 used,   1126.9 buff/cache
+MiB Swap:      0.0 total,      0.0 free,      0.0 used.   1425.6 avail Mem 
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+   5103 sandbox   20   0   21.9g 126820  52144 S  46.7   6.2   0:54.24 node
+   6036 sandbox   20   0  225816  23884  20452 R  33.3   1.2   0:00.81 postgres
+   6035 sandbox   20   0  225816  23620  20448 R  26.7   1.2   0:00.82 postgres
+   6037 sandbox   20   0  225496  23616  20444 R  26.7   1.2   0:00.85 postgres
+   6038 sandbox   20   0  225656  23616  20444 R  26.7   1.2   0:00.84 postgres
+   6039 sandbox   20   0  225976  23876  20444 R  26.7   1.2   0:00.81 postgres
+   6023 sandbox   20   0   11.3g  97164  54056 S  13.3   4.8   0:00.33 node
