@@ -194,10 +194,49 @@ describe('SSE poll mode cursor reliability (production mode)', () => {
     await reading.catch(() => {});
     ctrl.abort();
     collected.sort((a, b) => a - b);
-    expect(collected.length).toBe(20); // teams + team_members per created team
+    // Semantic, not brittle-count: each create emits teams-INSERT +
+    // team_members-INSERT + teams-UPDATE(member_count) = 3 events today, but
+    // what matters is complete ordered delivery - every committed event
+    // between the first and last seen must arrive, with at least the
+    // essential 2 per created team present.
+    expect(collected.length).toBeGreaterThanOrEqual(20);
     for (let i = 1; i < collected.length; i++) {
       // Gapless: no committed event was skipped between the first and last seen.
       expect(collected[i] - collected[i - 1]).toBe(1);
     }
+  }, 12_000);
+
+  test('member join emits a teams UPDATE event (board-visible member_count invalidation)', async () => {
+    const leader = await makeUser('CntLeader');
+    const team = (await createTeam(leader.token, 'CntTeam')).json().team;
+    const watcher = await makeUser('CntWatcher');
+    const ctrl = new AbortController();
+    const res = await fetch(`${base}/api/events`, { signal: ctrl.signal, headers: { authorization: `Bearer ${watcher.token}` } });
+    const reading = (async () => {
+      const reader = res.body!.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value ?? new Uint8Array(), { stream: true });
+        if (buf.replace(/ /g, '').includes('"t":"teams","op":"UPDATE"')) break;
+      }
+      return buf;
+    })();
+    await new Promise((r) => setTimeout(r, 400));
+    const joiner = await makeUser('CntJoiner');
+    const join = await app.inject({
+      method: 'POST', url: '/api/teams/join-by-code',
+      headers: { ...auth(joiner.token), 'idempotency-key': idemKey() },
+      payload: { code: team.invite_code },
+    });
+    expect(join.statusCode).toBe(201);
+    const buf = await reading.catch(() => '');
+    ctrl.abort();
+    // Board clients watching a team card must see the count change.
+    expect(buf.replace(/ /g, '')).toContain('"t":"teams","op":"UPDATE"');
+    expect(buf.replace(/ /g, '')).toContain('"t":"team_members","op":"INSERT"');
   }, 12_000);
 });
