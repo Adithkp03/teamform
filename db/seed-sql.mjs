@@ -9,8 +9,20 @@ const url = process.env.DATABASE_URL;
 const client = new pg.Client({ connectionString: url, ssl: /neon\.tech|sslmode=require/.test(url) ? { rejectUnauthorized: false } : undefined });
 await client.connect();
 
+// Seed profiles are synthetic (no auth account, no password_hash): they can
+// never log in. Create them set-based if absent so this script is the single
+// clean-database path.
 const { rows: users } = await client.query('SELECT count(*)::int AS n FROM profiles WHERE is_seed');
-if (users[0].n < 10000) throw new Error(`expected 10,000 seed profiles, found ${users[0].n}; run db/seed.mjs first`);
+if (users[0].n === 0) {
+  await client.query(
+    `INSERT INTO profiles (id, display_name, skills, timezone, utc_offset_minutes, looking_for_team, is_seed)
+     SELECT gen_random_uuid(),
+            'Seed User ' || g,
+            (ARRAY['react','typescript','node','postgres','python','ml','go','rust','design','devops'])[1 + (g % 10): 1 + (g % 10) + (g % 2)],
+            'Asia/Kolkata', 330, (g % 10) < 6, true
+     FROM generate_series(1, 10000) AS g`, []);
+}
+console.log('seed profiles:', (await client.query('SELECT count(*) FROM profiles WHERE is_seed')).rows[0].count);
 
 let hackathonId;
 const { rows: hex } = await client.query(`SELECT id FROM hackathons WHERE slug = 'ps1' LIMIT 1`);

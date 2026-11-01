@@ -1,0 +1,68 @@
+=== clean reseed 2026-11-01T11:55:45Z on Neon (ap-southeast-1) ===
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+
+schema dropped + recreated
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+
+apply 0001_init.sql
+apply 0003_auth_and_notify.sql
+migrations up to date
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+
+seed profiles: 10000
+hackathon aa17321d-d677-4a87-b3b4-fb39ba339a70
+teams: 2000
+members: 6000
+audit: 6000
+done: { users: '10003', teams: '2000', members: '6000' }
+PASS (0) no team exceeds its hackathon max size
+PASS (0) no person is in two teams in one hackathon
+PASS (0) every team leader is actually a member with role leader
+PASS (0) no accepted request lacks a membership
+PASS (0) no pending request belongs to someone already in a team for that hackathon
+PASS (0) every membership has a matching audit entry
+[eval]:1
+const pg=require('pg');const c=new pg.Client({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:false}});c.connect().then(async()=>{const r=await c.query(\"SELECT action, count(*)::int n FROM audit_log GROUP BY 1 ORDER BY 1\");console.log('audit rows by action:',JSON.stringify(r.rows));const p=await c.query(\"SELECT count(*)::int n FROM profiles WHERE is_seed=false\");console.log('non-seed profiles (demo fixtures, no login):',p.rows[0].n);await c.end();});
+                                                                                                                                                                          ^
+Expected unicode escape
+
+SyntaxError: Invalid or unexpected token
+    at makeContextifyScript (node:internal/vm:185:14)
+    at compileScript (node:internal/process/execution:383:10)
+    at evalTypeScript (node:internal/process/execution:256:22)
+    at node:internal/main/eval_string:74:3
+
+Node.js v22.23.4
+node:internal/modules/cjs/loader:1433
+  throw err;
+  ^
+
+Error: Cannot find module 'pg'
+Require stack:
+- /tmp/audit-breakdown.cjs
+    at Function._resolveFilename (node:internal/modules/cjs/loader:1430:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1040:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1045:22)
+    at Function._load (node:internal/modules/cjs/loader:1216:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:254:19)
+    at Module.require (node:internal/modules/cjs/loader:1527:12)
+    at require (node:internal/modules/helpers:147:16)
+    at Object.<anonymous> (/tmp/audit-breakdown.cjs:1:12)
+    at Module._compile (node:internal/modules/cjs/loader:1781:14)
+    at Object..js (node:internal/modules/cjs/loader:1913:10) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [ '/tmp/audit-breakdown.cjs' ]
+}
+
+Node.js v22.23.4
+
+
+audit rows by action: [{"action":"member_joined","n":4000},{"action":"team_created","n":2000}]
+non-seed profiles (demo fixtures): 3
+hackathon: [{"slug":"ps1","team_size_min":2,"team_size_max":4}]
