@@ -6,7 +6,7 @@ export default async function boardRoutes(app: FastifyInstance) {
   // The "looking for teammates" board. Single indexed query per side; this is the
   // endpoint the load test targets (p95 < 200 ms at 100 concurrent users).
   app.get('/api/board', { preHandler: authenticate }, async (req: any) => {
-    const limit = Math.min(Number(req.query.limit ?? 100), 200);
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
     const teams = await pool.query(
       `SELECT t.id, t.name, t.wanted_skills, t.created_at,
               h.team_size_min, h.team_size_max,
