@@ -63,23 +63,59 @@ export async function isSessionValid(sid: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+/** Revoke every family of the user (password reset). Family-locked so a
+ *  rotation racing the reset cannot mint a survivor afterwards. */
 export async function revokeAllRefreshTokens(userId: string): Promise<void> {
-  await pool.query(
-    `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`,
-    [userId],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const fams = await client.query(
+      `SELECT DISTINCT COALESCE(family_id, id) AS fam FROM auth_refresh_tokens WHERE user_id = $1`,
+      [userId],
+    );
+    for (const { fam } of fams.rows) {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [fam]);
+    }
+    await client.query(
+      `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`,
+      [userId],
+    );
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 /** Logout: revoke the presented token's ENTIRE session family - grace-minted
- *  sibling tokens must not survive a logout. Unknown tokens are a no-op. */
+ *  sibling tokens must not survive a logout. The family advisory lock makes
+ *  this atomic with rotation: a racing rotation either mints before the lock
+ *  (and its successor is revoked here) or re-reads the revoked state after.
+ *  Unknown tokens are a no-op. */
 export async function revokeRefreshToken(token: string): Promise<void> {
-  await pool.query(
-    `UPDATE auth_refresh_tokens SET revoked_at = now()
-     WHERE COALESCE(family_id, id) = (
-       SELECT COALESCE(family_id, id) FROM auth_refresh_tokens WHERE token_hash = $1
-     ) AND revoked_at IS NULL`,
-    [hashToken(token)],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT COALESCE(family_id, id) AS fam FROM auth_refresh_tokens WHERE token_hash = $1`,
+      [hashToken(token)],
+    );
+    if (rows.length) {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [rows[0].fam]);
+      await client.query(
+        `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
+        [rows[0].fam],
+      );
+    }
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -106,31 +142,62 @@ const graceMs = () => Number(process.env.REFRESH_GRACE_MS ?? 10_000);
 // sessions. The grace window never crosses family boundaries and can never
 // create or extend a second session.
 export async function rotateRefreshToken(oldToken: string): Promise<{ userId: string; token: string; id: string; familyId: string }> {
-  const { rows } = await pool.query(
-    `SELECT id, user_id, revoked_at, rotated_at, expires_at, COALESCE(family_id, id) AS family_id
-     FROM auth_refresh_tokens WHERE token_hash = $1`,
-    [hashToken(oldToken)],
-  );
-  if (!rows.length) throw errors.unauthorized();
-  const row = rows[0];
-  if (row.revoked_at) {
-    if (row.rotated_at && Date.now() - new Date(row.rotated_at).getTime() <= graceMs()) {
-      // legitimate rotation race: rotate again, same family
-      const next = await issueRefreshToken(row.user_id, row.family_id);
-      return { userId: row.user_id, token: next.token, id: next.id, familyId: row.family_id };
-    }
-    // replay after the window: kill the whole family, not just this token
-    await pool.query(
-      `UPDATE auth_refresh_tokens SET revoked_at = now()
-       WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
-      [row.family_id],
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT id, user_id, revoked_at, rotated_at, expires_at, COALESCE(family_id, id) AS family_id
+       FROM auth_refresh_tokens WHERE token_hash = $1`,
+      [hashToken(oldToken)],
     );
-    throw errors.unauthorized();
+    if (!rows.length) { await client.query('ROLLBACK'); throw errors.unauthorized(); }
+    const familyId = rows[0].family_id;
+    // Serialize with logout/reset on this family, then re-read the presented
+    // token under the lock so a revocation that landed in between is seen.
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [familyId]);
+    const { rows: cur } = await client.query(
+      `SELECT id, user_id, revoked_at, rotated_at, expires_at FROM auth_refresh_tokens WHERE id = $1`,
+      [rows[0].id],
+    );
+    const row = cur[0];
+    const mintInFamily = async () => {
+      const token = randomBytes(32).toString('hex');
+      // Absolute family lifetime: the successor inherits the presented
+      // token's expires_at - rotation never extends the family's authority.
+      const ins = await client.query(
+        `INSERT INTO auth_refresh_tokens (user_id, token_hash, expires_at, family_id)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [row.user_id, hashToken(token), row.expires_at, familyId],
+      );
+      return { token, id: ins.rows[0].id };
+    };
+    if (row.revoked_at) {
+      if (row.rotated_at && Date.now() - new Date(row.rotated_at).getTime() <= graceMs()) {
+        // legitimate rotation race: rotate again, same family. The window is
+        // anchored at THIS token's rotated_at - fixed, never rolling.
+        const next = await mintInFamily();
+        await client.query('COMMIT');
+        return { userId: row.user_id, token: next.token, id: next.id, familyId };
+      }
+      // replay after the window: kill the whole family (RFC 9700 reuse detection)
+      await client.query(
+        `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
+        [familyId],
+      );
+      await client.query('COMMIT');
+      throw errors.unauthorized();
+    }
+    if (new Date(row.expires_at).getTime() <= Date.now()) { await client.query('ROLLBACK'); throw errors.unauthorized(); }
+    await client.query(`UPDATE auth_refresh_tokens SET revoked_at = now(), rotated_at = now() WHERE id = $1`, [row.id]);
+    const next = await mintInFamily();
+    await client.query('COMMIT');
+    return { userId: row.user_id, token: next.token, id: next.id, familyId };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
   }
-  if (new Date(row.expires_at).getTime() <= Date.now()) throw errors.unauthorized();
-  await pool.query(`UPDATE auth_refresh_tokens SET revoked_at = now(), rotated_at = now() WHERE id = $1`, [row.id]);
-  const next = await issueRefreshToken(row.user_id, row.family_id);
-  return { userId: row.user_id, token: next.token, id: next.id, familyId: row.family_id };
 }
 
 /** Single-use action token (reset: 30 min, verify: 7 days); hash stored. */

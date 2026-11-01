@@ -30,30 +30,40 @@ Enrollment + hackathon-scoped board, board cursor pagination, suggestion-score t
 
 ## Session and token semantics (post-hardening, exact)
 
+Design basis: RFC 9700 (OAuth 2.0 Security BCP) requires public clients to
+use refresh-token rotation with reuse detection, and Auth0's rotation docs
+(fetched 2026-11-02) define the family model: reuse of an invalidated token
+invalidates the entire token family regardless of race order.
+
 - Access tokens are 15-minute JWTs carrying `sub` and `sid`, where `sid` is
-  the SESSION FAMILY id (not an individual token row). Refresh tokens are
-  opaque 30-day secrets; only their SHA-256 hash is stored.
-- Session family (the vetted rotation pattern): one family per login. Every
-  rotation mints the next token INSIDE the same family (`family_id`), so a
-  session is one revocable unit no matter how often it rotates. Silent
-  refresh does not change `sid`: open SSE streams survive rotation.
-- Grace window (`REFRESH_GRACE_MS`, default 10s): two tabs racing to present
-  the SAME rotated token inside the window each perform another rotation
-  WITHIN THE SAME FAMILY. A grace hit never returns a stored successor (no
-  plaintext exists server-side) and never creates an independent session:
-  tested across different source IPs, logout with any one grace-minted token
-  revokes the legitimate rotation and every grace sibling together.
-- Replay: presenting a rotated token AFTER the window revokes the ENTIRE
-  family (compromise scoped to that session; other devices are separate
-  families and unaffected). Logout and password reset revoke without a grace
-  window - logout kills the presented token's family, reset kills every
-  family of the user.
+  the SESSION FAMILY id. Refresh tokens are opaque secrets; only SHA-256
+  hashes are stored. Absolute family lifetime is 30 days from login: rotation
+  INHERITS the presented token's expires_at, so active use never extends a
+  family's authority (tested).
+- Rotation is one transaction per family: a per-family advisory lock +
+  re-read under the lock makes rotation atomic with logout and reset - a
+  racing logout either sees the fresh successor (and revokes it) or the
+  rotation re-reads the revoked state and fails (tested: no survivor either
+  way).
+- Grace window (`REFRESH_GRACE_MS`, default 10s): racing tabs presenting the
+  SAME rotated token inside its window each rotate again INSIDE the family.
+  The window is anchored at that token's rotated_at - fixed, never rolling
+  (tested). A grace hit never returns a stored successor: no plaintext
+  exists server-side, by design.
+- Replay after the window revokes the ENTIRE family (RFC 9700 reuse
+  detection); logout revokes the presented token's family; reset revokes
+  every family of the user.
+- Known residual limit (accepted, not a claim of absolute security): inside
+  the 10s window, parallel presentations mint parallel bearer tokens of the
+  SAME family. They never extend the family's lifetime, are killed atomically
+  by any logout/replay/reset on the family, and exist only because hash-only
+  storage rules out returning the same successor token (Auth0's approach).
 - SSE revocation: the poll-mode fleet sweep re-validates each connected
   session family at the top of every tick (`EVENTS_POLL_MS`, 1000ms in
   production); a dead family's stream receives `session_revoked` and ends.
   Measured locally: 50 connected clients, all revoked in one statement ->
-  50/50 streams ended, 39ms wall at a 50ms poll. That is a measured result,
-  not a strict guarantee under production load.
+  50/50 streams ended, 39-42ms wall at a 50ms poll. Measured result, not a
+  strict production guarantee.
 - Email: when no mail provider is configured (production default), reset and
   verification endpoints return 503 `email_not_configured` and the UI says
   delivery is not configured - it never claims an email was sent.

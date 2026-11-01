@@ -1,6 +1,9 @@
 import { beforeAll, beforeEach, expect, test } from 'vitest';
 import { app, migrate, resetDb, auth, idemKey, createTeam, makeUser } from './helpers.js';
 import { mailOutbox } from '../src/mailer.js';
+import { pool } from '../src/db.js';
+import { createHash } from 'node:crypto';
+const sha = (t: string) => createHash('sha256').update(t).digest('hex');
 import { signToken } from '../src/auth.js';
 
 beforeAll(() => { migrate(); });
@@ -212,4 +215,54 @@ test('grace replay never branches the session family (multi-IP): one logout kill
   for (const t of [...minted.slice(1), r1.json().refresh_token]) {
     expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', remoteAddress: '10.0.0.8', payload: { refresh_token: t } })).statusCode).toBe(401);
   }
+});
+
+test('rotation inherits absolute family expiry - authority never extends', async () => {
+  const s = await signup('abs@x.dev');
+  const r1 = s.json().refresh_token;
+  const exp1 = (await pool.query('SELECT expires_at FROM auth_refresh_tokens WHERE token_hash = $1', [sha(r1)])).rows[0].expires_at;
+  const r2res = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } });
+  expect(r2res.statusCode).toBe(200);
+  const r2 = r2res.json().refresh_token;
+  const exp2 = (await pool.query('SELECT expires_at FROM auth_refresh_tokens WHERE token_hash = $1', [sha(r2)])).rows[0].expires_at;
+  expect(new Date(exp2).getTime()).toBe(new Date(exp1).getTime()); // no rolling renewal
+});
+
+test('grace window is anchored at the original rotation, not rolling', async () => {
+  const prev = process.env.REFRESH_GRACE_MS;
+  process.env.REFRESH_GRACE_MS = '250';
+  try {
+    const s = await signup('fixedwin@x.dev');
+    const r1 = s.json().refresh_token;
+    const r2 = (await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } })).json().refresh_token;
+    await new Promise((r) => setTimeout(r, 100)); // still inside r1's window
+    const r3res = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } });
+    expect(r3res.statusCode).toBe(200); // grace re-rotation inside the family
+    const r3 = r3res.json().refresh_token;
+    await new Promise((r) => setTimeout(r, 300)); // past r1's ORIGINAL window
+    expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } })).statusCode).toBe(401);
+    // replay killed the whole family, including every grace-minted sibling
+    for (const t of [r2, r3]) {
+      expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: t } })).statusCode).toBe(401);
+    }
+  } finally {
+    if (prev === undefined) delete process.env.REFRESH_GRACE_MS; else process.env.REFRESH_GRACE_MS = prev;
+  }
+});
+
+test('logout racing rotation is atomic: no surviving token afterwards', async () => {
+  const s = await signup('race@x.dev');
+  const r1 = s.json().refresh_token;
+  const [lo, rot] = await Promise.all([
+    app.inject({ method: 'POST', url: '/api/auth/logout', payload: { refresh_token: r1 } }),
+    app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } }),
+  ]);
+  // whichever won, the end state is a dead family: the old token and any
+  // successor minted by a winning rotation are both unusable
+  expect([200, 401]).toContain(rot.statusCode);
+  if (rot.statusCode === 200) {
+    const r2 = rot.json().refresh_token;
+    expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r2 } })).statusCode).toBe(401);
+  }
+  expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } })).statusCode).toBe(401);
 });
