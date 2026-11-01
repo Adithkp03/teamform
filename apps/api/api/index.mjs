@@ -53364,7 +53364,7 @@ function buildApp(opts = {}) {
     if (err?.code === "23503") {
       return reply.code(409).send({ error: { code: "conflict", message: "Referenced record no longer exists" } });
     }
-    req.log.error(err);
+    console.error(err);
     return reply.code(500).send({ error: { code: "internal", message: "Internal server error" } });
   });
   app2.register(authRoutes);
