@@ -3,50 +3,139 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { useToast } from '../components/Toasts';
+import {
+  firebaseSignIn, firebaseSignUp, firebaseSendReset, firebaseResendVerification, firebaseTokens,
+} from '../firebaseClient';
 
 // Dev login tab only for local builds (VITE_SHOW_DEV_LOGIN=true); production never shows it.
 const SHOW_DEV_LOGIN = import.meta.env.VITE_SHOW_DEV_LOGIN === 'true';
+
+type Mode = 'login' | 'signup' | 'dev' | 'forgot' | 'claim';
+
+function friendlyFirebaseError(err: any): string {
+  switch (err?.code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+      return 'Wrong email or password.';
+    case 'auth/email-already-in-use':
+      return 'That email already has a Firebase account - sign in instead.';
+    case 'auth/weak-password':
+      return 'Password is too weak - use at least 6 characters.';
+    case 'auth/too-many-requests':
+      return 'Too many attempts - wait a moment and try again.';
+    case 'auth/network-request-failed':
+      return 'Network error reaching the sign-in service - check your connection.';
+    default:
+      return err?.message ?? 'Something went wrong';
+  }
+}
 
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
-  const [mode, setMode] = useState<'login' | 'signup' | 'dev' | 'forgot'>('login');
+  const [mode, setMode] = useState<Mode>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [legacyPassword, setLegacyPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  // Firebase tokens held while the user completes the legacy-account claim.
+  const [pending, setPending] = useState<{ idToken: string; refreshToken: string } | null>(null);
+  const [unverifiedUser, setUnverifiedUser] = useState<any>(null);
+
+  async function exchange(idToken: string, refreshToken: string, displayName?: string) {
+    const res = await api('/api/auth/firebase', {
+      method: 'POST',
+      body: { id_token: idToken, firebase_refresh_token: refreshToken, display_name: displayName },
+    });
+    login(res.token, res.user_id, res.refresh_token);
+    navigate('/profile');
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
+    setUnverifiedUser(null);
     try {
       if (mode === 'forgot') {
         try {
-          await api('/api/auth/forgot-password', { method: 'POST', body: { email } });
-          toast('If an account exists for that email, a reset link is on its way.');
-          setMode('login');
-        } catch (err: any) {
-          // No generic "on its way" when the deployment cannot send email.
-          toast(err.code === 'email_not_configured'
-            ? 'Email delivery is not configured on this deployment, so reset links cannot be sent yet.'
-            : err.message, 'error');
+          await firebaseSendReset(email);
+        } catch {
+          // Deliberately identical outcome: no account enumeration.
         }
+        toast('If an account exists for that email, a reset link is on its way (check spam too).');
+        setMode('login');
         return;
       }
-      const path = mode === 'dev' ? '/api/auth/dev-login' : `/api/auth/${mode}`;
-      const body = mode === 'dev'
-        ? { display_name: name || 'Dev User' }
-        : mode === 'signup'
-          ? { email, password, display_name: name || email.split('@')[0] }
-          : { email, password };
-      const res = await api(path, { method: 'POST', body });
-      login(res.token, res.user_id, res.refresh_token);
-      navigate('/profile');
+      if (mode === 'dev') {
+        const res = await api('/api/auth/dev-login', { method: 'POST', body: { display_name: name || 'Dev User' } });
+        login(res.token, res.user_id, res.refresh_token);
+        navigate('/profile');
+        return;
+      }
+      if (mode === 'claim') {
+        if (!pending) throw new Error('Sign in again to restart account migration.');
+        const res = await api('/api/auth/firebase/claim', {
+          method: 'POST',
+          body: {
+            id_token: pending.idToken,
+            firebase_refresh_token: pending.refreshToken,
+            legacy_email: email,
+            legacy_password: legacyPassword,
+          },
+        });
+        toast('Your existing TeamForm account and teams are migrated.');
+        login(res.token, res.user_id, res.refresh_token);
+        navigate('/profile');
+        return;
+      }
+      if (mode === 'signup') {
+        await firebaseSignUp(email, password);
+        toast('Account created. We sent a verification link to your email (check spam too) - click it, then sign in.');
+        setMode('login');
+        setPassword('');
+        return;
+      }
+      // login
+      const user = await firebaseSignIn(email, password);
+      const { idToken, refreshToken } = await firebaseTokens(user);
+      if (!user.emailVerified) {
+        setUnverifiedUser(user);
+        toast('Your email is not verified yet - click the link we sent you, then sign in again.', 'error');
+        return;
+      }
+      try {
+        await exchange(idToken, refreshToken, name || undefined);
+      } catch (err: any) {
+        if (err?.code === 'legacy_claim_required' || String(err?.message ?? '').includes('legacy_claim_required')) {
+          // An old password-era TeamForm account holds this email: migrate it
+          // by proving legacy ownership. Nothing is inherited automatically.
+          setPending({ idToken, refreshToken });
+          setMode('claim');
+          toast('This email has an existing TeamForm account - enter its old password to migrate it and keep your teams.');
+          return;
+        }
+        throw err;
+      }
     } catch (err: any) {
-      toast(err.message, 'error');
+      toast(friendlyFirebaseError(err), 'error');
     } finally { setBusy(false); }
   }
+
+  async function resendVerification() {
+    if (!unverifiedUser) return;
+    setBusy(true);
+    try {
+      await firebaseResendVerification(unverifiedUser);
+      toast('Verification email resent (check spam too).');
+    } catch (err: any) {
+      toast(friendlyFirebaseError(err), 'error');
+    } finally { setBusy(false); }
+  }
+
+  const tabs: Mode[] = SHOW_DEV_LOGIN ? ['login', 'signup', 'dev'] : ['login', 'signup'];
 
   return (
     <div className="auth-layout">
@@ -61,14 +150,16 @@ export default function Login() {
       <section className="self-center py-2 lg:px-4">
       <p className="eyebrow mb-3">Your hackathon workspace</p><h1 className="mb-3 text-3xl font-bold">Sign in to TeamForm</h1>
       <p className="mb-6 text-sm text-slate-400">Welcome back. Pick up where your team left off.</p>
-      <div className="mb-4 flex gap-2" role="tablist" aria-label="Sign in mode">
-        {((SHOW_DEV_LOGIN ? ['login', 'signup', 'dev'] : ['login', 'signup']) as Array<'login' | 'signup' | 'dev'>).map((m) => (
-          <button key={m} role="tab" aria-selected={mode === m} onClick={() => setMode(m)}
-            className={mode === m ? 'btn-primary flex-1' : 'btn-secondary flex-1'}>
-            {m === 'login' ? 'Sign in' : m === 'signup' ? 'Create account' : 'Dev login'}
-          </button>
-        ))}
-      </div>
+      {mode !== 'claim' && mode !== 'forgot' && (
+        <div className="mb-4 flex gap-2" role="tablist" aria-label="Sign in mode">
+          {tabs.map((m) => (
+            <button key={m} role="tab" aria-selected={mode === m} onClick={() => setMode(m)}
+              className={mode === m ? 'btn-primary flex-1' : 'btn-secondary flex-1'}>
+              {m === 'login' ? 'Sign in' : m === 'signup' ? 'Create account' : 'Dev login'}
+            </button>
+          ))}
+        </div>
+      )}
       <form onSubmit={submit} className="card space-y-5">
         {mode === 'forgot' && (
           <>
@@ -82,14 +173,36 @@ export default function Login() {
             <button type="button" className="btn-ghost w-full" onClick={() => setMode('login')}>Back to sign in</button>
           </>
         )}
-        {mode !== 'login' && mode !== 'forgot' && (
+        {mode === 'claim' && (
+          <>
+            <p className="text-sm text-slate-300">
+              This email belongs to an existing TeamForm account from before we moved sign-in.
+              Enter its <strong>old TeamForm password</strong> to migrate it - your teams and roles come along.
+              Without it, nothing is transferred.
+            </p>
+            <div>
+              <label className="label" htmlFor="email">Email</label>
+              <input id="email" type="email" className="input" value={email} readOnly />
+            </div>
+            <div>
+              <label className="label" htmlFor="legacy-password">Old TeamForm password</label>
+              <input id="legacy-password" type="password" className="input" autoComplete="current-password"
+                value={legacyPassword} onChange={(e) => setLegacyPassword(e.target.value)} required autoFocus />
+            </div>
+            <button className="btn-primary w-full" disabled={busy}>Migrate my account</button>
+            <button type="button" className="btn-ghost w-full" onClick={() => { setMode('login'); setPending(null); }}>
+              Back to sign in
+            </button>
+          </>
+        )}
+        {(mode === 'signup' || mode === 'dev') && (
           <div>
             <label className="label" htmlFor="name">Display name</label>
             <input id="name" className="input" value={name} onChange={(e) => setName(e.target.value)}
               required={mode === 'dev'} autoFocus={mode === 'dev'} maxLength={80} />
           </div>
         )}
-        {mode !== 'dev' && mode !== 'forgot' && (
+        {(mode === 'login' || mode === 'signup') && (
           <>
             <div>
               <label className="label" htmlFor="email">Email</label>
@@ -98,16 +211,20 @@ export default function Login() {
             </div>
             <div>
               <label className="label" htmlFor="password">Password</label>
-              <input id="password" type="password" className="input" minLength={8}
+              <input id="password" type="password" className="input" minLength={6}
                 autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
                 value={password} onChange={(e) => setPassword(e.target.value)} required />
-              {mode === 'signup' && <p className="mt-1 text-xs text-slate-400">At least 8 characters.</p>}
             </div>
           </>
         )}
-        {mode !== 'forgot' && (
+        {(mode === 'login' || mode === 'signup' || mode === 'dev') && (
           <button className="btn-primary w-full" disabled={busy}>
             {mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Continue'}
+          </button>
+        )}
+        {mode === 'login' && unverifiedUser && (
+          <button type="button" className="btn-secondary w-full" disabled={busy} onClick={resendVerification}>
+            Resend verification email
           </button>
         )}
         {mode === 'login' && (
@@ -118,7 +235,7 @@ export default function Login() {
         )}
         {mode === 'dev' && <p className="text-xs text-slate-400">Dev login is for local/demo use when the server enables it.</p>}
       </form>
-      <p className="mt-5 text-xs leading-relaxed text-slate-400">Demo note: verification and password-reset email delivery is currently disabled. Your account can still be created.</p>
+      <p className="mt-5 text-xs leading-relaxed text-slate-400">Verification and password-reset emails are sent by Firebase - they can land in spam, so check there too.</p>
       </section>
     </div>
   );

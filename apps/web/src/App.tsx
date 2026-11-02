@@ -1,8 +1,6 @@
 import { Link, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import Login from './pages/Login';
-import Reset from './pages/Reset';
-import Verify from './pages/Verify';
 import Profile from './pages/Profile';
 import Board from './pages/Board';
 import Team from './pages/Team';
@@ -40,8 +38,6 @@ export default function App() {
       <main id="main" className="mx-auto max-w-7xl px-4 py-7 sm:px-8 sm:py-10">
         <Routes>
           <Route path="/login" element={token ? <Navigate to="/board" replace /> : <Login />} />
-          <Route path="/reset" element={<Reset />} />
-          <Route path="/verify" element={<Verify />} />
           <Route path="/board" element={token ? <Board /> : <Navigate to="/login" replace />} />
           <Route path="/team/:id" element={token ? <Team /> : <Navigate to="/login" replace />} />
           <Route path="/suggestions" element={token ? <Suggestions /> : <Navigate to="/login" replace />} />
