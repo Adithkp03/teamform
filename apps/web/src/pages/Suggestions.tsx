@@ -9,6 +9,7 @@ export default function Suggestions() {
   const [data, setData] = useState<any>(null);
 
   useEffect(() => {
+    localStorage.setItem('tf_seen_suggestions', '1');
     api('/api/suggestions', { token }).then(setData).catch((e) => toast(e.message, 'error'));
   }, [token]);
 

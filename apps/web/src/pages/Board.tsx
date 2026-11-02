@@ -18,6 +18,8 @@ export default function Board() {
   const [tzFilter, setTzFilter] = useState('');
   const [minSeats, setMinSeats] = useState('');
   const [me, setMe] = useState<any>(null);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(() => localStorage.getItem('tf_onboarding_dismissed') === '1');
+  const [sawSuggestions, setSawSuggestions] = useState(() => localStorage.getItem('tf_seen_suggestions') === '1');
   const [code, setCode] = useState('');
   const [joining, setJoining] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -159,6 +161,34 @@ export default function Board() {
         <Link to="/profile" className="btn-ghost">Edit your profile <span aria-hidden="true">↗</span></Link>
       </header>
       <div className="rounded-2xl border border-blue-100 bg-[#edf2ff] px-5 py-4 text-sm text-slate-700"><span className="font-semibold text-accent">Better together.</span> Browse open teams or discover people whose skills complement yours. Have an invite? Join with a code.</div>
+      {me && !onboardingDismissed && !me.my_team_id && (
+        <section aria-label="Getting started checklist" className="card space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">Get set up in three steps</h2>
+            <button
+              className="btn-ghost !min-h-[36px] px-3 py-1 text-xs"
+              aria-label="Dismiss getting started checklist"
+              onClick={() => { localStorage.setItem('tf_onboarding_dismissed', '1'); setOnboardingDismissed(true); }}
+            >Dismiss</button>
+          </div>
+          <ol className="space-y-2 text-sm">
+            {[
+              { done: !!(me.display_name && me.skills?.length), label: 'Complete your profile with your skills', link: { to: '/profile', text: 'Edit profile' } },
+              { done: false, label: 'Join a team below, start your own, or use an invite code', link: null },
+              { done: sawSuggestions, label: 'Meet teammates picked for your skill set', link: { to: '/suggestions', text: 'See suggestions' } },
+            ].map((step) => (
+              <li key={step.label} className="flex items-center gap-2">
+                {step.done
+                  ? <span className="font-bold text-emerald-700" aria-hidden="true">✓</span>
+                  : <span className="inline-block h-3.5 w-3.5 shrink-0 rounded-sm border border-slate-400" aria-hidden="true" />}
+                <span className="sr-only">{step.done ? 'Done: ' : 'To do: '}</span>
+                <span className={step.done ? 'text-slate-400 line-through' : ''}>{step.label}</span>
+                {!step.done && step.link && <Link className="text-accent hover:underline" to={step.link.to}>{step.link.text}</Link>}
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
       <div className="board-grid"><section aria-label="Discover teams and people" className="min-w-0">
       <div className="mb-5 space-y-3">
         <div><label className="label" htmlFor="board-search">Search the whole board</label><input id="board-search" className="input" type="search" placeholder="Search by team or person name..." value={search} onChange={(e) => setSearch(e.target.value)} /></div>

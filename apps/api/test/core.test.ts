@@ -28,6 +28,14 @@ describe('auth & profiles', () => {
     const get = await app.inject({ method: 'GET', url: '/api/me', headers: auth(u.token) });
     expect(get.json().profile.display_name).toBe('Asha V');
     expect(get.json().profile.skills).toEqual(['react', 'node']);
+    expect(get.json().profile.my_team_id).toBeNull();
+  });
+
+  test('GET /api/me reports my_team_id once in a team', async () => {
+    const u = await makeUser('Teamed Me');
+    const team = (await createTeam(u.token, 'Mine FC')).json().team;
+    const get = await app.inject({ method: 'GET', url: '/api/me', headers: auth(u.token) });
+    expect(get.json().profile.my_team_id).toBe(team.id);
   });
 
   test('profile write reconciles utc offset with a valid IANA timezone', async () => {

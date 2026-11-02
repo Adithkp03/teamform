@@ -413,9 +413,11 @@ export default async function authRoutes(app: FastifyInstance) {
 
   app.get('/api/me', { preHandler: authenticate }, async (req: any) => {
     const { rows } = await pool.query(
-      `SELECT id, display_name, skills, timezone, utc_offset_minutes, looking_for_team, email,
-              created_at, last_active_at, (email_verified_at IS NOT NULL) AS email_verified
-       FROM profiles WHERE id = $1`, [req.userId]);
+      `SELECT p.id, p.display_name, p.skills, p.timezone, p.utc_offset_minutes, p.looking_for_team, p.email,
+              p.created_at, p.last_active_at, (p.email_verified_at IS NOT NULL) AS email_verified,
+              tm.team_id AS my_team_id
+       FROM profiles p LEFT JOIN team_members tm ON tm.user_id = p.id
+       WHERE p.id = $1`, [req.userId]);
     if (!rows.length) throw errors.notFound('Profile not found; create it with PUT /api/me');
     return { profile: rows[0] };
   });
