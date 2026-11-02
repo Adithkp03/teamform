@@ -86,3 +86,29 @@ test('non-uuid path params are rejected with 400 before any lookup', async () =>
   const res2 = await app.inject({ method: 'POST', url: '/api/requests/nope/accept', headers: { ...auth(u.token), 'idempotency-key': idemKey() } });
   expect(res2.statusCode).toBe(400);
 });
+
+test('min_open_seats filters teams by remaining capacity', async () => {
+  const a = await makeUser('Cap A');
+  const b = await makeUser('Cap B');
+  // 1 of 4 seats taken -> 3 open
+  const t1 = await createTeam(a.token, 'Roomy Team');
+  expect(t1.statusCode).toBe(201);
+  const t2 = await createTeam(b.token, 'Tight Team');
+  expect(t2.statusCode).toBe(201);
+  const code2 = t2.json().team.invite_code;
+  for (const u of [await makeUser('Cap C'), await makeUser('Cap D')]) {
+    const j = await app.inject({ method: 'POST', url: '/api/teams/join-by-code', headers: { ...auth(u.token), 'idempotency-key': idemKey() }, payload: { code: code2 } });
+    expect(j.statusCode).toBe(201);
+  }
+  // Tight Team is now 3 of 4 -> 1 open
+  const viewer = await makeUser('Cap V');
+  const all = await app.inject({ method: 'GET', url: '/api/board?limit=24', headers: auth(viewer.token) });
+  const names = all.json().teams.map((t: any) => t.name);
+  expect(names).toContain('Roomy Team');
+  expect(names).toContain('Tight Team');
+  const roomyOnly = await app.inject({ method: 'GET', url: '/api/board?limit=24&min_open_seats=2', headers: auth(viewer.token) });
+  const names2 = roomyOnly.json().teams.map((t: any) => t.name);
+  expect(names2).toContain('Roomy Team');
+  expect(names2).not.toContain('Tight Team');
+  expect((await app.inject({ method: 'GET', url: '/api/board?min_open_seats=0', headers: auth(viewer.token) })).statusCode).toBe(400);
+});

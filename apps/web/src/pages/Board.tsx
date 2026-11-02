@@ -16,6 +16,7 @@ export default function Board() {
   const [search, setSearch] = useState('');
   const [skillFilter, setSkillFilter] = useState('');
   const [tzFilter, setTzFilter] = useState('');
+  const [minSeats, setMinSeats] = useState('');
   const [me, setMe] = useState<any>(null);
   const [code, setCode] = useState('');
   const [joining, setJoining] = useState(false);
@@ -32,9 +33,10 @@ export default function Board() {
     if (search.trim()) params.set('q', search.trim());
     if (skillFilter.trim()) params.set('skill', skillFilter.trim());
     if (tzFilter.trim()) params.set('timezone', tzFilter.trim());
+    if (minSeats) params.set('min_open_seats', minSeats);
     for (const [k, v] of Object.entries(extra ?? {})) params.set(k, v);
     return params.toString();
-  }, [search, skillFilter, tzFilter]);
+  }, [search, skillFilter, tzFilter, minSeats]);
 
   const refresh = useCallback(() => {
     api(`/api/board?${queryString()}`, { token }).then(setBoard).catch((e) => toast(e.message, 'error'));
@@ -148,7 +150,7 @@ export default function Board() {
     return reasons;
   }
 
-  const hasFilters = !!(search.trim() || skillFilter.trim() || tzFilter.trim());
+  const hasFilters = !!(search.trim() || skillFilter.trim() || tzFilter.trim() || minSeats);
 
   return (
     <div className="space-y-6">
@@ -163,6 +165,7 @@ export default function Board() {
         <div className="grid gap-3 sm:grid-cols-2">
           <div><label className="label" htmlFor="board-skill">Filter by skill</label><input id="board-skill" className="input" placeholder="e.g. React" value={skillFilter} onChange={(e) => setSkillFilter(e.target.value)} /></div>
           <div><label className="label" htmlFor="board-tz">Filter by timezone</label><input id="board-tz" className="input" placeholder="e.g. Asia/Calcutta" value={tzFilter} onChange={(e) => setTzFilter(e.target.value)} /></div>
+          <div><label className="label" htmlFor="board-seats">Min open seats</label><input id="board-seats" className="input" type="number" min={1} max={20} placeholder="e.g. 2" value={minSeats} onChange={(e) => setMinSeats(e.target.value)} /></div>
         </div>
         <p className="text-xs text-slate-400">Searches and filters apply across the entire board, not just loaded cards, and stay active as you load more.</p>
       </div>

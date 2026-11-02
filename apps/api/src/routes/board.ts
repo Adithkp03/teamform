@@ -32,6 +32,7 @@ export default async function boardRoutes(app: FastifyInstance) {
     q: z.string().trim().max(80).optional(),
     skill: z.string().trim().min(1).max(40).optional(),
     timezone: z.string().trim().max(60).optional(),
+    min_open_seats: z.coerce.number().int().min(1).max(20).optional(),
   });
   app.get('/api/board', { preHandler: authenticate }, async (req: any) => {
     const query = parse(querySchema, req.query ?? {});
@@ -39,7 +40,7 @@ export default async function boardRoutes(app: FastifyInstance) {
     const tc = parseCursor(query.teams_cursor);
     const pc = parseCursor(query.people_cursor);
     const q = query.q ? `%${query.q.replace(/[%_\\]/g, (m) => '\\' + m)}%` : null;
-    const cacheKey = [limit, query.teams_cursor ?? '', query.people_cursor ?? '', q ?? '', query.skill ?? '', query.timezone ?? ''].join('|');
+    const cacheKey = [limit, query.teams_cursor ?? '', query.people_cursor ?? '', q ?? '', query.skill ?? '', query.timezone ?? '', query.min_open_seats ?? ''].join('|');
     return readBoard(cacheKey, async () => {
       const teams = pool.query(
         `WITH page AS (
@@ -51,6 +52,7 @@ export default async function boardRoutes(app: FastifyInstance) {
              AND t.member_count < h.team_size_max
              AND ($4::text IS NULL OR t.name ILIKE $4)
              AND ($5::text IS NULL OR $5 = ANY(t.wanted_skills))
+             AND ($6::int IS NULL OR (h.team_size_max - t.member_count) >= $6)
              AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2::timestamptz, $3::uuid))
            ORDER BY t.created_at DESC, t.id DESC
            LIMIT $1
@@ -62,7 +64,7 @@ export default async function boardRoutes(app: FastifyInstance) {
          FROM page
          JOIN profiles p ON p.id = page.leader_id
          ORDER BY page.created_at DESC, page.id DESC`,
-        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null],
+        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null],
       );
       const people = pool.query(
         `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
