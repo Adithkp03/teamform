@@ -40750,7 +40750,7 @@ var require_utils4 = __commonJS({
     var nodeCrypto2 = __require("crypto");
     module.exports = {
       postgresMd5PasswordHash,
-      randomBytes: randomBytes3,
+      randomBytes: randomBytes4,
       deriveKey,
       sha256,
       hashByName,
@@ -40760,7 +40760,7 @@ var require_utils4 = __commonJS({
     var webCrypto = nodeCrypto2.webcrypto || globalThis.crypto;
     var subtleCrypto = webCrypto.subtle;
     var textEncoder = new TextEncoder();
-    function randomBytes3(length) {
+    function randomBytes4(length) {
       return webCrypto.getRandomValues(Buffer.alloc(length));
     }
     async function md5(string) {
@@ -45649,7 +45649,7 @@ var require_jws = __commonJS({
     exports.createSign = function createSign(opts) {
       return new SignStream(opts);
     };
-    exports.createVerify = function createVerify(opts) {
+    exports.createVerify = function createVerify2(opts) {
       return new VerifyStream(opts);
     };
   }
@@ -52790,7 +52790,7 @@ async function revokeAllRefreshTokens(userId) {
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text))", [fam]);
     }
     await client.query(
-      `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`,
+      `UPDATE auth_refresh_tokens SET revoked_at = now(), firebase_refresh_token = NULL WHERE user_id = $1 AND revoked_at IS NULL`,
       [userId]
     );
     await client.query("COMMIT");
@@ -52813,7 +52813,7 @@ async function revokeRefreshToken(token) {
     if (rows.length) {
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text))", [rows[0].fam]);
       await client.query(
-        `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
+        `UPDATE auth_refresh_tokens SET revoked_at = now(), firebase_refresh_token = NULL WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
         [rows[0].fam]
       );
     }
@@ -52869,7 +52869,7 @@ async function rotateRefreshToken(oldToken) {
         }
       }
       await client.query(
-        `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
+        `UPDATE auth_refresh_tokens SET revoked_at = now(), firebase_refresh_token = NULL WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
         [familyId]
       );
       await client.query("COMMIT");
@@ -52911,6 +52911,153 @@ async function consumeActionToken(token, kind) {
   return rows[0]?.user_id ?? null;
 }
 
+// src/firebase.ts
+import { createVerify, createCipheriv, createDecipheriv, createHmac, randomBytes as randomBytes3 } from "node:crypto";
+var testVerifier = null;
+var testRedeemer = null;
+var prodLike = () => Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
+function testModeAllowed() {
+  return process.env.FIREBASE_TEST_MODE === "true" && !prodLike();
+}
+function firebaseTestMode() {
+  return testModeAllowed();
+}
+function projectId() {
+  const pid = process.env.FIREBASE_PROJECT_ID;
+  if (!pid) throw errors.unavailable("firebase_not_configured", "Sign-in is not configured on this deployment");
+  return pid;
+}
+function apiKey() {
+  const key = process.env.FIREBASE_WEB_API_KEY;
+  if (!key) throw errors.unavailable("firebase_not_configured", "Sign-in is not configured on this deployment");
+  return key;
+}
+var CERTS_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
+var certCache = null;
+async function fetchCerts(forceRefresh = false) {
+  if (!forceRefresh && certCache && Date.now() < certCache.expiresAt) return certCache.certs;
+  let res;
+  try {
+    res = await fetch(CERTS_URL);
+  } catch {
+    throw errors.unavailable("firebase_unavailable", "Sign-in verification is temporarily unavailable");
+  }
+  if (!res.ok) throw errors.unavailable("firebase_unavailable", "Sign-in verification is temporarily unavailable");
+  const certs = await res.json();
+  const cc = res.headers.get("cache-control") ?? "";
+  const m = /max-age=(\d+)/.exec(cc);
+  const maxAgeSec = m ? Math.min(Number(m[1]), 24 * 3600) : 3600;
+  certCache = { certs, expiresAt: Date.now() + maxAgeSec * 1e3 };
+  return certs;
+}
+function b64urlJson(part) {
+  try {
+    return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+  } catch {
+    throw errors.unauthorized();
+  }
+}
+async function verifyFirebaseIdToken(idToken) {
+  if (testVerifier) return testVerifier(idToken);
+  if (process.env.FIREBASE_TEST_MODE === "true") {
+    if (!testModeAllowed()) throw new Error("FIREBASE_TEST_MODE is forbidden in production");
+    try {
+      return JSON.parse(Buffer.from(idToken, "base64url").toString("utf8"));
+    } catch {
+      throw errors.unauthorized();
+    }
+  }
+  const pid = projectId();
+  const parts = idToken.split(".");
+  if (parts.length !== 3) throw errors.unauthorized();
+  const [h, p, s] = parts;
+  const header = b64urlJson(h);
+  if (header.alg !== "RS256" || typeof header.kid !== "string") throw errors.unauthorized();
+  let certs = await fetchCerts();
+  let cert = certs[header.kid];
+  if (!cert) {
+    certs = await fetchCerts(true);
+    cert = certs[header.kid];
+    if (!cert) throw errors.unauthorized();
+  }
+  const verifier = createVerify("RSA-SHA256");
+  verifier.update(`${h}.${p}`);
+  let ok = false;
+  try {
+    ok = verifier.verify(cert, s, "base64url");
+  } catch {
+    ok = false;
+  }
+  if (!ok) throw errors.unauthorized();
+  const claims = b64urlJson(p);
+  const now = Math.floor(Date.now() / 1e3);
+  if (claims.iss !== `https://securetoken.google.com/${pid}`) throw errors.unauthorized();
+  if (claims.aud !== pid) throw errors.unauthorized();
+  if (typeof claims.exp !== "number" || claims.exp <= now) throw errors.unauthorized();
+  if (typeof claims.iat !== "number" || claims.iat > now + 60) throw errors.unauthorized();
+  if (typeof claims.sub !== "string" || claims.sub.length === 0 || claims.sub.length > 128) throw errors.unauthorized();
+  return { uid: claims.sub, email: claims.email, email_verified: claims.email_verified };
+}
+async function redeemFirebaseRefreshToken(refreshToken) {
+  if (testRedeemer) return testRedeemer(refreshToken);
+  if (process.env.FIREBASE_TEST_MODE === "true") {
+    if (!testModeAllowed()) throw new Error("FIREBASE_TEST_MODE is forbidden in production");
+    const m = /^fb-refresh-(.+)$/.exec(refreshToken);
+    if (!m) return { ok: false, reason: "invalid" };
+    return { ok: true, identity: { uid: `test-${m[1]}`, email: m[1], email_verified: true }, refreshToken };
+  }
+  let res;
+  try {
+    res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${apiKey()}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
+    });
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+  if (!res.ok) {
+    if (res.status >= 500) return { ok: false, reason: "unavailable" };
+    return { ok: false, reason: "invalid" };
+  }
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+  if (typeof data?.id_token !== "string") return { ok: false, reason: "unavailable" };
+  let identity;
+  try {
+    identity = await verifyFirebaseIdToken(data.id_token);
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+  const next = typeof data.refresh_token === "string" && data.refresh_token ? data.refresh_token : refreshToken;
+  return { ok: true, identity, refreshToken: next };
+}
+function encKey() {
+  const secret2 = process.env.JWT_SECRET;
+  if (!secret2) throw new Error("JWT_SECRET is not set");
+  return createHmac("sha256", secret2).update("teamform-firebase-refresh-token-store").digest();
+}
+function encryptRefreshToken(token) {
+  const iv = randomBytes3(12);
+  const cipher = createCipheriv("aes-256-gcm", encKey(), iv);
+  const ct = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
+  return `${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${ct.toString("base64url")}`;
+}
+function decryptRefreshToken(stored) {
+  const [iv, tag, ct] = stored.split(".");
+  if (!iv || !tag || !ct) throw new Error("corrupt stored firebase credential");
+  const decipher = createDecipheriv("aes-256-gcm", encKey(), Buffer.from(iv, "base64url"));
+  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  return Buffer.concat([decipher.update(Buffer.from(ct, "base64url")), decipher.final()]).toString("utf8");
+}
+
+// src/routes/auth.ts
+import { createHash as createHash2 } from "node:crypto";
+
 // src/util.ts
 function parse(schema, data) {
   const result = schema.safeParse(data);
@@ -52927,6 +53074,9 @@ function genInviteCode() {
 }
 
 // src/routes/auth.ts
+var hashToken2 = (t) => createHash2("sha256").update(t).digest("hex");
+var LEGACY_SESSION_SUNSET = new Date(process.env.LEGACY_SESSION_SUNSET ?? "2026-11-10T00:00:00Z");
+var legacySessionsExpired = () => Date.now() >= LEGACY_SESSION_SUNSET.getTime();
 var profileSchema = external_exports.object({
   display_name: external_exports.string().trim().min(1).max(80),
   skills: external_exports.array(external_exports.string().trim().min(1).max(40)).max(20).default([]),
@@ -52983,9 +53133,202 @@ async function authRoutes(app2) {
     const session = await issueRefreshToken(rows[0].id);
     return { token: signToken(rows[0].id, session.familyId), refresh_token: session.token, user_id: rows[0].id };
   });
+  app2.post("/api/auth/firebase", async (req) => {
+    const body = parse(external_exports.object({
+      id_token: external_exports.string().min(1).max(8192),
+      firebase_refresh_token: external_exports.string().min(1).max(4096),
+      display_name: external_exports.string().trim().min(1).max(80).optional()
+    }), req.body);
+    await rateLimit(`auth:${req.ip}`, firebaseTestMode() ? 1e3 : 10, 60);
+    const identity = await verifyFirebaseIdToken(body.id_token);
+    if (!identity.email) throw errors.unauthorized();
+    if (identity.email_verified !== true) {
+      throw errors.forbidden("email_unverified: verify your email address before signing in");
+    }
+    const bound = await redeemFirebaseRefreshToken(body.firebase_refresh_token);
+    if (!bound.ok) {
+      if (bound.reason === "unavailable") throw errors.unavailable("firebase_unavailable", "Sign-in verification is temporarily unavailable");
+      throw errors.unauthorized();
+    }
+    if (bound.identity.uid !== identity.uid) throw errors.unauthorized();
+    const email = identity.email.toLowerCase();
+    const displayName = body.display_name ?? email.split("@")[0].slice(0, 80) ?? "User";
+    let userId;
+    const { rows: byUid } = await pool.query("SELECT id FROM profiles WHERE firebase_uid = $1", [identity.uid]);
+    if (byUid.length) {
+      userId = byUid[0].id;
+      await pool.query("UPDATE profiles SET last_active_at = now() WHERE id = $1", [userId]);
+    } else {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const { rows: linked } = await client.query(
+          `SELECT id FROM profiles WHERE lower(email) = lower($1) AND firebase_uid IS NOT NULL AND firebase_uid <> $2 FOR UPDATE`,
+          [email, identity.uid]
+        );
+        if (linked.length) {
+          await client.query("ROLLBACK");
+          throw errors.conflict("email_taken", "This email is already linked to a different sign-in account");
+        }
+        const { rows: legacy } = await client.query(
+          `SELECT id FROM profiles WHERE lower(email) = lower($1) AND firebase_uid IS NULL AND password_hash IS NOT NULL FOR UPDATE`,
+          [email]
+        );
+        if (legacy.length) {
+          await client.query("ROLLBACK");
+          throw errors.conflict("legacy_claim_required", "An existing TeamForm account uses this email; sign in with your legacy password to migrate it");
+        }
+        userId = crypto.randomUUID();
+        await client.query(
+          `INSERT INTO profiles (id, display_name, email, firebase_uid, email_verified_at)
+           VALUES ($1, $2, $3, $4, now())`,
+          [userId, displayName, email, identity.uid]
+        );
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {
+        });
+        throw e;
+      } finally {
+        client.release();
+      }
+    }
+    const session = await issueRefreshToken(userId);
+    await pool.query(
+      `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
+      [encryptRefreshToken(bound.refreshToken), session.id]
+    );
+    return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId };
+  });
+  app2.post("/api/auth/firebase/claim", async (req) => {
+    const body = parse(external_exports.object({
+      id_token: external_exports.string().min(1).max(8192),
+      firebase_refresh_token: external_exports.string().min(1).max(4096),
+      legacy_email: external_exports.string().email().max(320).optional(),
+      legacy_password: external_exports.string().min(1).max(200).optional()
+    }), req.body);
+    await rateLimit(`auth:${req.ip}`, firebaseTestMode() ? 1e3 : 10, 60);
+    const identity = await verifyFirebaseIdToken(body.id_token);
+    if (!identity.email) throw errors.unauthorized();
+    if (identity.email_verified !== true) {
+      throw errors.forbidden("email_unverified: verify your email address before signing in");
+    }
+    const bound = await redeemFirebaseRefreshToken(body.firebase_refresh_token);
+    if (!bound.ok) {
+      if (bound.reason === "unavailable") throw errors.unavailable("firebase_unavailable", "Sign-in verification is temporarily unavailable");
+      throw errors.unauthorized();
+    }
+    if (bound.identity.uid !== identity.uid) throw errors.unauthorized();
+    let viaSessionUserId = null;
+    if (!body.legacy_password) {
+      const header = req.headers.authorization ?? "";
+      const m = /^Bearer (.+)$/.exec(header);
+      if (!m) throw errors.unauthorized();
+      try {
+        viaSessionUserId = verifyToken(m[1]).userId;
+      } catch {
+        throw errors.unauthorized();
+      }
+    }
+    const client = await pool.connect();
+    let userId;
+    try {
+      await client.query("BEGIN");
+      let rows;
+      if (body.legacy_password) {
+        if (!body.legacy_email) throw errors.badRequest("legacy_email is required with legacy_password");
+        rows = (await client.query(
+          `SELECT id, password_hash FROM profiles
+           WHERE lower(email) = lower($1) AND firebase_uid IS NULL AND password_hash IS NOT NULL FOR UPDATE`,
+          [body.legacy_email]
+        )).rows;
+        if (!rows.length || !await bcryptjs_default.compare(body.legacy_password, rows[0].password_hash)) {
+          await client.query("ROLLBACK");
+          throw errors.unauthorized();
+        }
+      } else {
+        rows = (await client.query(
+          `SELECT id, password_hash FROM profiles
+           WHERE id = $1 AND firebase_uid IS NULL AND password_hash IS NOT NULL FOR UPDATE`,
+          [viaSessionUserId]
+        )).rows;
+        if (!rows.length) {
+          await client.query("ROLLBACK");
+          throw errors.unauthorized();
+        }
+      }
+      const legacy = rows[0];
+      const { rows: linked } = await client.query(
+        `SELECT id FROM profiles WHERE firebase_uid = $1 AND id <> $2 FOR UPDATE`,
+        [identity.uid, legacy.id]
+      );
+      if (linked.length) {
+        await client.query("ROLLBACK");
+        throw errors.conflict("firebase_uid_taken", "This sign-in account is already linked to a different profile");
+      }
+      await client.query(
+        `UPDATE profiles SET firebase_uid = $1, password_hash = NULL,
+           email = lower($2), email_verified_at = COALESCE(email_verified_at, now()), last_active_at = now()
+         WHERE id = $3`,
+        [identity.uid, identity.email, legacy.id]
+      );
+      await client.query(
+        `INSERT INTO audit_log (actor_id, action, metadata) VALUES ($1, 'legacy_profile_claimed', $2)`,
+        [legacy.id, JSON.stringify({ via: body.legacy_password ? "password" : "session", firebase_uid: identity.uid })]
+      );
+      await client.query("COMMIT");
+      userId = legacy.id;
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {
+      });
+      throw e;
+    } finally {
+      client.release();
+    }
+    await revokeAllRefreshTokens(userId);
+    const session = await issueRefreshToken(userId);
+    await pool.query(
+      `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
+      [encryptRefreshToken(bound.refreshToken), session.id]
+    );
+    return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId };
+  });
   app2.post("/api/auth/refresh", async (req) => {
     const body = parse(external_exports.object({ refresh_token: external_exports.string().min(1).max(128) }), req.body);
     await rateLimit(`auth:${req.ip}`, 30, 60);
+    const presented = await pool.query(
+      `SELECT user_id, COALESCE(family_id, id) AS fam FROM auth_refresh_tokens WHERE token_hash = $1 AND revoked_at IS NULL`,
+      [hashToken2(body.refresh_token)]
+    );
+    if (presented.rows.length) {
+      const famId = presented.rows[0].fam;
+      const { rows: fam } = await pool.query(
+        `SELECT id, firebase_refresh_token FROM auth_refresh_tokens
+         WHERE COALESCE(family_id, id) = $1 AND firebase_refresh_token IS NOT NULL
+         ORDER BY created_at ASC LIMIT 1`,
+        [famId]
+      );
+      if (fam.length) {
+        const check = await redeemFirebaseRefreshToken(decryptRefreshToken(fam[0].firebase_refresh_token));
+        if (!check.ok) {
+          if (check.reason === "unavailable") {
+            throw errors.unavailable("firebase_unavailable", "Sign-in verification is temporarily unavailable");
+          }
+          await pool.query(
+            `UPDATE auth_refresh_tokens SET revoked_at = now(), firebase_refresh_token = NULL
+             WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
+            [famId]
+          );
+          throw errors.unauthorized();
+        }
+        await pool.query(
+          `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
+          [encryptRefreshToken(check.refreshToken), fam[0].id]
+        );
+      } else if (legacySessionsExpired()) {
+        throw errors.unauthorized();
+      }
+    }
     const { userId, token, familyId } = await rotateRefreshToken(body.refresh_token);
     return { token: signToken(userId, familyId), refresh_token: token, user_id: userId };
   });
@@ -53039,9 +53382,11 @@ async function authRoutes(app2) {
   });
   app2.get("/api/me", { preHandler: authenticate }, async (req) => {
     const { rows } = await pool.query(
-      `SELECT id, display_name, skills, timezone, utc_offset_minutes, looking_for_team, email,
-              created_at, last_active_at, (email_verified_at IS NOT NULL) AS email_verified
-       FROM profiles WHERE id = $1`,
+      `SELECT p.id, p.display_name, p.skills, p.timezone, p.utc_offset_minutes, p.looking_for_team, p.email,
+              p.created_at, p.last_active_at, (p.email_verified_at IS NOT NULL) AS email_verified,
+              tm.team_id AS my_team_id
+       FROM profiles p LEFT JOIN team_members tm ON tm.user_id = p.id
+       WHERE p.id = $1`,
       [req.userId]
     );
     if (!rows.length) throw errors.notFound("Profile not found; create it with PUT /api/me");
@@ -53050,6 +53395,15 @@ async function authRoutes(app2) {
   app2.put("/api/me", { preHandler: authenticate }, async (req) => {
     const body = parse(profileSchema, req.body);
     await rateLimit(`profile:${req.userId}`, 20, 60);
+    let offset = body.utc_offset_minutes;
+    try {
+      const tz = await pool.query(
+        `SELECT round(EXTRACT(EPOCH FROM (now() AT TIME ZONE $1 - now() AT TIME ZONE 'UTC')) / 60)::int AS off`,
+        [body.timezone]
+      );
+      if (tz.rows[0]) offset = tz.rows[0].off;
+    } catch {
+    }
     const { rows } = await pool.query(
       `INSERT INTO profiles (id, display_name, skills, timezone, utc_offset_minutes, looking_for_team, last_active_at)
        VALUES ($1, $2, $3, $4, $5, $6, now())
@@ -53057,7 +53411,7 @@ async function authRoutes(app2) {
          timezone = EXCLUDED.timezone, utc_offset_minutes = EXCLUDED.utc_offset_minutes,
          looking_for_team = EXCLUDED.looking_for_team, last_active_at = now()
        RETURNING *`,
-      [req.userId, body.display_name, body.skills, body.timezone, body.utc_offset_minutes, body.looking_for_team]
+      [req.userId, body.display_name, body.skills, body.timezone, offset, body.looking_for_team]
     );
     return { profile: rows[0] };
   });
@@ -53429,7 +53783,8 @@ async function boardRoutes(app2) {
     people_cursor: external_exports.string().max(200).optional(),
     q: external_exports.string().trim().max(80).optional(),
     skill: external_exports.string().trim().min(1).max(40).optional(),
-    timezone: external_exports.string().trim().max(60).optional()
+    timezone: external_exports.string().trim().max(60).optional(),
+    min_open_seats: external_exports.coerce.number().int().min(1).max(20).optional()
   });
   app2.get("/api/board", { preHandler: authenticate }, async (req) => {
     const query = parse(querySchema, req.query ?? {});
@@ -53437,7 +53792,7 @@ async function boardRoutes(app2) {
     const tc = parseCursor(query.teams_cursor);
     const pc = parseCursor(query.people_cursor);
     const q = query.q ? `%${query.q.replace(/[%_\\]/g, (m) => "\\" + m)}%` : null;
-    const cacheKey = [limit, query.teams_cursor ?? "", query.people_cursor ?? "", q ?? "", query.skill ?? "", query.timezone ?? ""].join("|");
+    const cacheKey = [limit, query.teams_cursor ?? "", query.people_cursor ?? "", q ?? "", query.skill ?? "", query.timezone ?? "", query.min_open_seats ?? ""].join("|");
     return readBoard(cacheKey, async () => {
       const teams = pool.query(
         `WITH page AS (
@@ -53449,6 +53804,7 @@ async function boardRoutes(app2) {
              AND t.member_count < h.team_size_max
              AND ($4::text IS NULL OR t.name ILIKE $4)
              AND ($5::text IS NULL OR $5 = ANY(t.wanted_skills))
+             AND ($6::int IS NULL OR (h.team_size_max - t.member_count) >= $6)
              AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2::timestamptz, $3::uuid))
            ORDER BY t.created_at DESC, t.id DESC
            LIMIT $1
@@ -53460,7 +53816,7 @@ async function boardRoutes(app2) {
          FROM page
          JOIN profiles p ON p.id = page.leader_id
          ORDER BY page.created_at DESC, page.id DESC`,
-        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null]
+        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null]
       );
       const people = pool.query(
         `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
@@ -53509,6 +53865,8 @@ async function suggestionRoutes(app2) {
          SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at,
            (SELECT count(*)::int FROM (SELECT unnest(p.skills) EXCEPT SELECT unnest(me.skills)) d) AS complementary_skills,
            (SELECT count(*)::int FROM (SELECT unnest(p.skills) INTERSECT SELECT unnest(me.skills)) s) AS shared_skills,
+           (SELECT coalesce(array_agg(x.skill), '{}') FROM (SELECT unnest(p.skills) AS skill EXCEPT SELECT unnest(me.skills)) x) AS complementary_skill_names,
+           (SELECT coalesce(array_agg(y.skill), '{}') FROM (SELECT unnest(p.skills) AS skill INTERSECT SELECT unnest(me.skills)) y) AS shared_skill_names,
            (CASE WHEN p.utc_offset_minutes = me.utc_offset_minutes THEN 2
                  WHEN abs(p.utc_offset_minutes - me.utc_offset_minutes) <= 120 THEN 1
                  ELSE 0 END) AS timezone_fit
@@ -53522,9 +53880,21 @@ async function suggestionRoutes(app2) {
        LIMIT 20`,
       [req.userId]
     );
+    const shortList = (names) => names.length <= 3 ? names.join(", ") : `${names.slice(0, 3).join(", ")} +${names.length - 3} more`;
+    const suggestions = rows.map((r) => {
+      const parts = [];
+      const comp = r.complementary_skill_names ?? [];
+      const shared = r.shared_skill_names ?? [];
+      if (comp.length) parts.push(`adds ${shortList(comp)} that you don't have`);
+      if (shared.length) parts.push(`shares ${shortList(shared)} with you`);
+      if (r.timezone_fit === 2) parts.push("same timezone as you");
+      else if (r.timezone_fit === 1) parts.push("timezone within 2 hours of yours");
+      else parts.push("in a different timezone");
+      return { ...r, reason: parts.join("; ") };
+    });
     return {
       scoring: "score = 2*complementary_skills + 1*shared_skills + timezone_fit (same tz=2, within 2h=1, else 0)",
-      suggestions: rows
+      suggestions
     };
   });
 }
