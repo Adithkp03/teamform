@@ -42,7 +42,7 @@ limitation; BLOCKED = cannot be demonstrated in the available environment.
 | Live URL | DONE |
 | Load-test report | DONE (docs/load-test-report.md: local MET headline with correction history, diagnosis, and honest open items for hosted CI + production) |
 | 1-page design doc | DONE (docs/design.md) |
-| <=5 min walkthrough video | Revision in progress: replaces earlier v7; new light UI, race-first proof, benchmark caveats |
+| <=5 min walkthrough video | Revised v8 exported and visually inspected:3m42s, race-first proof, light UI, local approval/two-session/mobile capture, exact latest CI conclusion and limits. Private delivery, previousv7retained. |
 
 ## Current benchmark evidence (2 Nov 2026)
 
@@ -62,3 +62,15 @@ Blue/white light interface, responsive navigation, board discovery with loaded-c
 Current UI revision local verification:103/103API tests (8files),6/6browser tests including keyboard-only, full formation flow, two-session realtime, serious/critical axe scan and320/390px/search/final-cursor regression. A first keyboard run caught profile Save racing its async load; Save now waits for completion and keyboard test awaits that actual readiness before tabbing. Earlier failure is not erased.
 
 Hosted UI revision check:8dc8713CI/API and chaos passed; E2E5passed/1failed because new screenshot paths assumed a local /downloads directory. Changed only the test output paths to Playwright's portable per-test outputPath, not product behavior or pass criteria. Failure retained here. Follow-up CI must verify the correction.
+
+## Verified revision closeout (2 Nov 2026, 13:10 IST)
+
+Test-path correction `2df081d` passed all four automatic workflows, without rerunning or changing thresholds:
+- CI/API103tests: https://github.com/Adithkp03/teamform/actions/runs/41407249930
+- E2E6tests: https://github.com/Adithkp03/teamform/actions/runs/41407250075
+- Chaos: https://github.com/Adithkp03/teamform/actions/runs/41407249901
+- Load: https://github.com/Adithkp03/teamform/actions/runs/41407249950
+
+Production `/api/health` verified full `2df081ddce9d62c58d1ebeb4fa826abed93bbd2a`; actual production login pixels show the new light interface. Latest load is reported as a **pass conclusion**, not assigned any earlier run's numeric p95. Source public APIs and the actual GitHub run page were inspected. `8dc8713` E2E portability failure remains above.
+
+Revised private deliverables: `teamform-walkthrough-v8.mp4` (221.68seconds), `teamform-design-final-v4.pdf` (1page), `ps1-requirements-checklist-v9.pdf` (1page). These supersede older editions, which remain retained. Editable content snapshots live in docs/submission-revision-20261102/. Email and production-load gaps remain open.

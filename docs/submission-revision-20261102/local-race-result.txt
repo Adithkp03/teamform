@@ -1,0 +1,26 @@
+
+ RUN  v2.1.9 /home/sandbox/teamform
+
+skip 0001_init.sql
+skip 0003_auth_and_notify.sql
+skip 0004_domain_events.sql
+skip 0005_board_perf.sql
+skip 0006_member_count_events.sql
+skip 0007_auth_hardening.sql
+skip 0008_refresh_grace.sql
+skip 0009_session_families.sql
+migrations up to date
+ ✓ apps/api/test/race.test.ts > race-proofing > 50 concurrent joins for the LAST seat: exactly one wins
+ ✓ apps/api/test/race.test.ts > race-proofing > 30 concurrent joins for 3 seats: exactly three win, count never exceeds max
+ ✓ apps/api/test/race.test.ts > race-proofing > concurrent accepts for the last seat: exactly one request is accepted
+ ✓ apps/api/test/race.test.ts > race-proofing > same person racing to join two teams lands in exactly one
+ ✓ apps/api/test/race.test.ts > race-proofing > concurrent double-click with the SAME idempotency key: one membership, consistent response
+ ✓ apps/api/test/race.test.ts > race-proofing > double-click create team with the same key never makes two teams
+ ✓ apps/api/test/race.test.ts > race-proofing > a race loser retrying with the same key gets the same stored 409
+ ✓ apps/api/test/race.test.ts > race-proofing > leader leaving while a join is in flight stays consistent
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  13:04:13
+   Duration  935ms (transform 129ms, setup 0ms, collect 278ms, tests 503ms, environment 0ms, prepare 40ms)
+
