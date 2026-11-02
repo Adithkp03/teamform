@@ -1,6 +1,6 @@
-import { beforeAll, beforeEach, expect, test } from 'vitest';
-import { app, migrate, resetDb, auth, idemKey, createTeam, makeUser } from './helpers.js';
-import { mailOutbox } from '../src/mailer.js';
+import { beforeAll, beforeEach, afterEach, expect, test } from 'vitest';
+import { app, migrate, resetDb, auth, idemKey, createTeam, makeUser, testIdToken } from './helpers.js';
+import { setFirebaseTestHooks } from '../src/firebase.js';
 import { pool } from '../src/db.js';
 import { createHash } from 'node:crypto';
 const sha = (t: string) => createHash('sha256').update(t).digest('hex');
@@ -8,23 +8,23 @@ import { signToken } from '../src/auth.js';
 
 beforeAll(() => { migrate(); });
 beforeEach(async () => { await resetDb(); });
+afterEach(() => { setFirebaseTestHooks(null, null); });
 
-const PW = 'password-123';
-const signup = (email: string, password = PW, display_name = 'Tester') =>
-  app.inject({ method: 'POST', url: '/api/auth/signup', payload: { email, password, display_name } });
-const login = (email: string, password = PW) =>
-  app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password } });
-const lastMail = (kind: 'verify' | 'reset') => [...mailOutbox()].reverse().find((m) => m.kind === kind);
-const tokenFromMail = (m: { url: string }) => new URL(m.url).searchParams.get('token')!;
+let seq = 0;
+const uniq = (tag: string) => `${tag}-${Date.now()}-${seq++}@x.dev`;
+const signup = (email: string, display_name = 'Tester') =>
+  app.inject({ method: 'POST', url: '/api/auth/firebase', payload: { id_token: testIdToken(email), display_name } });
 
-test('signup and login return short-lived access + refresh tokens', async () => {
-  const s = await signup('a@x.dev');
+test('firebase exchange returns short-lived access + refresh tokens; repeat sign-in reuses the account', async () => {
+  const email = uniq('a');
+  const s = await signup(email);
   expect(s.statusCode).toBe(200);
   expect(s.json().token).toBeTruthy();
   expect(s.json().refresh_token).toBeTruthy();
-  const l = await login('a@x.dev');
+  const l = await signup(email);
   expect(l.statusCode).toBe(200);
   expect(l.json().refresh_token).toBeTruthy();
+  expect(l.json().user_id).toBe(s.json().user_id); // same Firebase uid, same profile
 });
 
 test('refresh rotates; within the grace window the old token still exchanges (multi-tab safe)', async () => {
@@ -111,49 +111,6 @@ test('logout revokes the refresh token; unknown token is a no-op', async () => {
   expect(use.statusCode).toBe(401);
   const noop = await app.inject({ method: 'POST', url: '/api/auth/logout', payload: { refresh_token: 'deadbeef'.repeat(8) } });
   expect(noop.statusCode).toBe(200);
-});
-
-test('password reset: mails a single-use token, changes password, revokes sessions', async () => {
-  const s = await signup('reset@x.dev');
-  const r1 = s.json().refresh_token;
-  const forgot = await app.inject({ method: 'POST', url: '/api/auth/forgot-password', payload: { email: 'reset@x.dev' } });
-  expect(forgot.statusCode).toBe(200);
-  const mail = lastMail('reset');
-  expect(mail?.to).toBe('reset@x.dev');
-  const token = tokenFromMail(mail!);
-
-  const reset = await app.inject({ method: 'POST', url: '/api/auth/reset-password', payload: { token, password: 'new-password-9' } });
-  expect(reset.statusCode).toBe(200);
-  expect((await login('reset@x.dev', PW)).statusCode).toBe(401); // old password dead
-  expect((await login('reset@x.dev', 'new-password-9')).statusCode).toBe(200); // new works
-  // all pre-reset refresh sessions revoked
-  expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } })).statusCode).toBe(401);
-  // token is single-use
-  expect((await app.inject({ method: 'POST', url: '/api/auth/reset-password', payload: { token, password: 'another-99x' } })).statusCode).toBe(401);
-});
-
-test('forgot-password does not enumerate accounts', async () => {
-  const unknown = await app.inject({ method: 'POST', url: '/api/auth/forgot-password', payload: { email: 'nobody@x.dev' } });
-  expect(unknown.statusCode).toBe(200);
-  expect(unknown.json()).toEqual({ ok: true });
-});
-
-test('verify-email: token sets email_verified, resend reports already verified', async () => {
-  const s = await signup('ver@x.dev');
-  const access = s.json().token;
-  let me = await app.inject({ method: 'GET', url: '/api/me', headers: auth(access) });
-  expect(me.json().profile.email_verified).toBe(false);
-
-  const vtoken = tokenFromMail(lastMail('verify')!);
-  const v = await app.inject({ method: 'POST', url: '/api/auth/verify-email', payload: { token: vtoken } });
-  expect(v.statusCode).toBe(200);
-  me = await app.inject({ method: 'GET', url: '/api/me', headers: auth(access) });
-  expect(me.json().profile.email_verified).toBe(true);
-  // single-use
-  expect((await app.inject({ method: 'POST', url: '/api/auth/verify-email', payload: { token: vtoken } })).statusCode).toBe(401);
-
-  const resend = await app.inject({ method: 'POST', url: '/api/auth/resend-verification', headers: auth(access) });
-  expect(resend.json().already_verified).toBe(true);
 });
 
 test('expired access token is rejected with 401', async () => {
@@ -282,4 +239,25 @@ test('logout after rotation kills the family: a grace replay cannot resurrect it
   } finally {
     if (prev === undefined) delete process.env.REFRESH_GRACE_MS; else process.env.REFRESH_GRACE_MS = prev;
   }
+});
+
+test('firebase password reset/change invalidates app sessions at next rotation', async () => {
+  const email = uniq('revoke');
+  const uid = `test-${email}`;
+  const s = await signup(email);
+  expect(s.statusCode).toBe(200);
+  const r1 = s.json().refresh_token;
+  // rotation works while Firebase shows no revocation
+  const ok = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } });
+  expect(ok.statusCode).toBe(200);
+  const r2 = ok.json().refresh_token;
+  // Firebase reports a credential reset AFTER the session family started
+  setFirebaseTestHooks(null, async (u) => (u === uid ? Date.now() / 1000 + 60 : null));
+  expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r2 } })).statusCode).toBe(401);
+  // whole family dead: the just-minted successor cannot continue either
+  const r3 = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } });
+  expect(r3.statusCode).toBe(401);
+  // a fresh sign-in after the "reset" still works
+  setFirebaseTestHooks(null, null);
+  expect((await signup(email)).statusCode).toBe(200);
 });

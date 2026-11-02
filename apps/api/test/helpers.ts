@@ -1,3 +1,4 @@
+process.env.FIREBASE_TEST_MODE = 'true';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -45,4 +46,17 @@ export async function createTeam(token: string, name = 'Team A', extra: object =
     payload: { name, ...extra },
   });
   return res;
+}
+
+/** Unsigned offline Firebase token accepted only with FIREBASE_TEST_MODE=true (never production). */
+export const testIdToken = (email: string, verified = true, uid?: string) =>
+  Buffer.from(JSON.stringify({ uid: uid ?? `test-${email.toLowerCase()}`, email: email.toLowerCase(), email_verified: verified })).toString('base64url');
+
+/** Exchange an offline Firebase token for an app session, as the web client does. */
+export function firebaseSignup(name = 'User', email?: string, verified = true) {
+  const addr = (email ?? `${crypto.randomUUID()}@test.dev`).toLowerCase();
+  return app.inject({
+    method: 'POST', url: '/api/auth/firebase',
+    payload: { id_token: testIdToken(addr, verified), display_name: name },
+  });
 }

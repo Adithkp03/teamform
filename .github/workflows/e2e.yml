@@ -20,8 +20,8 @@ jobs:
       - run: npm ci
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
-      - name: Build web (API on localhost:3100)
-        run: VITE_API_URL=http://localhost:3100 npm run build -w @teamform/web
+      - name: Build web (API on localhost:3100, offline Firebase seam for e2e)
+        run: VITE_API_URL=http://localhost:3100 VITE_FIREBASE_TEST_MODE=true npm run build -w @teamform/web
       # Playwright's webServer starts the API (tsx) and vite preview; global
       # setup migrates and seeds a clean database.
       - name: Run browser tests against the SHIPPED serverless bundle (full flow, two-browser realtime, keyboard, axe)

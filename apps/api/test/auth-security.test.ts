@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import jwt from 'jsonwebtoken';
-import { app, migrate, resetDb, makeUser, auth, idemKey, createTeam } from './helpers.js';
+import { app, migrate, resetDb, makeUser, auth, idemKey, createTeam, testIdToken } from './helpers.js';
+import { pool } from '../src/db.js';
 import { signToken } from '../src/auth.js';
 
 beforeAll(migrate);
@@ -9,9 +10,12 @@ beforeEach(() => resetDb());
 const signup = (email: string, password: string, display_name = 'New User') =>
   app.inject({ method: 'POST', url: '/api/auth/signup', payload: { email, password, display_name } });
 
-describe('credential auth', () => {
-  test('signup returns a working token and never the password hash', async () => {
-    const res = await signup('Asha@Example.com', 'correct horse battery');
+describe('firebase credential exchange', () => {
+  const fb = (email: string, display_name = 'New User', verified = true, uid?: string) =>
+    app.inject({ method: 'POST', url: '/api/auth/firebase', payload: { id_token: testIdToken(email, verified, uid), display_name } });
+
+  test('exchange returns a working token and no credential material', async () => {
+    const res = await fb('Asha@Example.com');
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.token).toBeTruthy();
@@ -20,43 +24,76 @@ describe('credential auth', () => {
     expect(me.statusCode).toBe(200);
     expect(JSON.stringify(me.json())).not.toMatch(/\$2[aby]\$/);
     expect(me.json().profile.email).toBe('asha@example.com');
+    expect(me.json().profile.email_verified).toBe(true);
   });
 
-  test('duplicate email (case-insensitive) gets 409, not 500', async () => {
-    await signup('dup@example.com', 'password-one');
-    const res = await signup('DUP@example.com', 'password-two');
-    expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe('email_taken');
+  test('unverified Firebase email is rejected with 403 and creates no profile', async () => {
+    const res = await fb('unv@example.com', 'Unverified', false);
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.message).toContain('email_unverified');
+    const { rows } = await pool.query('SELECT 1 FROM profiles WHERE lower(email) = lower($1)', ['unv@example.com']);
+    expect(rows.length).toBe(0);
   });
 
-  test('login with wrong password and unknown email both get the same 401', async () => {
-    await signup('real@example.com', 'password-one');
-    const wrong = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'real@example.com', password: 'password-two' } });
-    const unknown = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'ghost@example.com', password: 'password-two' } });
-    expect(wrong.statusCode).toBe(401);
-    expect(unknown.statusCode).toBe(401);
-    expect(wrong.json().error.code).toBe(unknown.json().error.code);
+  test('garbage token is rejected with 401', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/auth/firebase', payload: { id_token: 'not-a-token' } });
+    expect(res.statusCode).toBe(401);
   });
 
-  test('good login returns a token', async () => {
-    await signup('login@example.com', 'password-one');
-    const res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'LOGIN@example.com', password: 'password-one' } });
+  test('email linked to a different Firebase uid is a 409, never silently re-linked', async () => {
+    const first = await fb('same@example.com', 'First', true, 'uid-A');
+    expect(first.statusCode).toBe(200);
+    const second = await fb('SAME@example.com', 'Second', true, 'uid-B');
+    expect(second.statusCode).toBe(409);
+    expect(second.json().error.code).toBe('email_taken');
+    const { rows } = await pool.query('SELECT id, firebase_uid FROM profiles WHERE lower(email) = lower($1)', ['same@example.com']);
+    expect(rows.length).toBe(1);
+    expect(rows[0].firebase_uid).toBe('uid-A');
+  });
+
+  test('legacy unverified email profile is detached, never inherited: verified sign-in gets a fresh profile', async () => {
+    // Legacy password-era profile: email was never verified; owns a team.
+    const legacyId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO profiles (id, display_name, email, password_hash) VALUES ($1, 'Legacy Owner', 'claim@example.com', 'stale-hash')`,
+      [legacyId],
+    );
+    const res = await fb('claim@example.com', 'Real Owner', true, 'uid-real');
     expect(res.statusCode).toBe(200);
-    expect(res.json().token).toBeTruthy();
+    const newId = res.json().user_id;
+    expect(newId).not.toBe(legacyId); // no inheritance of the legacy identity
+    const { rows: legacy } = await pool.query('SELECT email, firebase_uid, display_name FROM profiles WHERE id = $1', [legacyId]);
+    expect(legacy[0].email).toBeNull(); // identifier released
+    expect(legacy[0].firebase_uid).toBeNull(); // never linked
+    const { rows: audit } = await pool.query(`SELECT 1 FROM audit_log WHERE actor_id = $1 AND action = 'legacy_email_detached'`, [legacyId]);
+    expect(audit.length).toBe(1);
   });
 
-  test('short or invalid credentials get 400', async () => {
-    expect((await signup('a@b.co', 'short')).statusCode).toBe(400);
-    expect((await signup('not-an-email', 'long-enough-password')).statusCode).toBe(400);
-  });
-
-  test('auth endpoints are rate limited', async () => {
+  test('exchange endpoint is rate limited', async () => {
     let last = 0;
     for (let i = 0; i < 12; i++) {
-      const res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'rl@example.com', password: 'wrong-password' } });
+      const res = await app.inject({ method: 'POST', url: '/api/auth/firebase', payload: { id_token: testIdToken(`rl${i}@example.com`) } });
       last = res.statusCode;
     }
     expect(last).toBe(429);
+  });
+
+  test('retired password endpoints are gone', async () => {
+    for (const url of ['/api/auth/signup', '/api/auth/login', '/api/auth/forgot-password', '/api/auth/reset-password', '/api/auth/verify-email', '/api/auth/resend-verification']) {
+      const res = await app.inject({ method: 'POST', url, payload: {} });
+      expect(res.statusCode, url).toBe(404);
+    }
+  });
+
+  test('offline test verifier is refused in production-like env', async () => {
+    const prevVercel = process.env.VERCEL;
+    process.env.VERCEL = '1';
+    try {
+      const { verifyFirebaseIdToken } = await import('../src/firebase.js');
+      await expect(verifyFirebaseIdToken(testIdToken('prod@example.com'))).rejects.toThrow('forbidden in production');
+    } finally {
+      if (prevVercel === undefined) delete process.env.VERCEL; else process.env.VERCEL = prevVercel;
+    }
   });
 });
 

@@ -245,9 +245,10 @@ describe('SSE poll mode cursor reliability (production mode)', () => {
 
 /** Sign up over HTTP so the access token carries a session id (sid). */
 async function signupHttp(email: string): Promise<{ token: string; refresh_token: string; user_id: string }> {
-  const res = await fetch(`${base}/api/auth/signup`, {
+  const idToken = Buffer.from(JSON.stringify({ uid: `test-${email.toLowerCase()}`, email: email.toLowerCase(), email_verified: true })).toString('base64url');
+  const res = await fetch(`${base}/api/auth/firebase`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', display_name: 'SSE Session User' }),
+    body: JSON.stringify({ id_token: idToken, display_name: 'SSE Session User' }),
   });
   if (!res.ok) throw new Error(`signup failed: ${res.status}`);
   return res.json();
@@ -290,9 +291,9 @@ describe('SSE session revocation', () => {
     const email = `sse-two-dev-${crypto.randomUUID()}@example.com`;
     const a = await signupHttp(email);
     // second device: log in again for an independent session
-    const login = await fetch(`${base}/api/auth/login`, {
+    const login = await fetch(`${base}/api/auth/firebase`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password: 'password123' }),
+      body: JSON.stringify({ id_token: Buffer.from(JSON.stringify({ uid: `test-${email.toLowerCase()}`, email: email.toLowerCase(), email_verified: true })).toString('base64url') }),
     });
     const b = await login.json();
     const streamA = await fetch(`${base}/api/events`, { headers: { authorization: `Bearer ${a.token}` } });
@@ -315,9 +316,9 @@ describe('SSE session lifecycle under refresh rotation', () => {
   test('silent refresh keeps the stream alive (same session family); other device unaffected', async () => {
     const email = `rot-${crypto.randomUUID()}@example.com`;
     const a = await signupHttp(email);
-    const loginRes = await fetch(`${base}/api/auth/login`, {
+    const loginRes = await fetch(`${base}/api/auth/firebase`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password: 'password123' }),
+      body: JSON.stringify({ id_token: Buffer.from(JSON.stringify({ uid: `test-${email.toLowerCase()}`, email: email.toLowerCase(), email_verified: true })).toString('base64url') }),
     });
     const b = await loginRes.json();
     const ctrl = new AbortController();
