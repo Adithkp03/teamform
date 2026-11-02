@@ -1,18 +1,26 @@
 # TeamForm - race-proof team formation at scale
 
-Hack4Hack Crew Hiring Challenge 2026, PS1. A production-grade team-formation
+Hack4Hack Crew Hiring Challenge 2026, PS1. A team-formation
 service for a 10,000-participant hackathon: teams with expiring invite codes,
 leader-approved join requests, a live "looking for teammates" board, and
 correctness proven under concurrency.
 
 ## Stack
 
-- **API**: Node 22 + Fastify (TypeScript), stateless; runs locally, in Docker, or on Render (free tier, no card)
+- **API**: Node 22 + Fastify (TypeScript), stateless; deployed as a Vercel serverless bundle; also runs locally or in Docker
 - **Database**: PostgreSQL 16 (Neon serverless free tier in production, Docker locally) - the correctness backbone
-- **Realtime**: Server-sent events over Postgres LISTEN/NOTIFY (portable, no vendor lock-in), with resync-on-reconnect and a 60s polling safety net
+- **Realtime**: Server-sent events backed by a durable Postgres outbox, polled about once per second in the serverless deployment; optional LISTEN/NOTIFY mode for self-hosted processes; resync on reconnect
 - **Web**: React 18 + Vite + Tailwind; mobile-first, fully keyboard-operable
-- **Tests**: Vitest against a real Postgres (54 tests: 50-way race, idempotency, auth/JWT hardening, SSE push)
+- **Tests**: 99 API tests against real Postgres, 5 browser tests (flows, realtime, keyboard and axe), plus one crash-recovery drill checking 6 database invariants
 - **Load test**: k6 (target: p95 < 200 ms on `GET /api/board` at 100 concurrent users)
+
+## Current deployment and evidence
+
+Live app: https://teamform-web.vercel.app
+
+Verification/password-reset email delivery is not configured. Mailjet closed the new account during setup; no working provider is claimed.
+
+Historical CI results are preserved with their original tested source IDs. See `docs/history/` for the pre-publication token cleanup and old-to-new commit mapping. On sanitized/provenance commit `35f54a6`, CI, E2E and Chaos passed, but the mixed-load read p95 was **206.47ms**, missing the unchanged **<200ms** threshold. All 114,816 checks passed and no HTTP request failed in that mixed run. This does not establish repeatable mixed-load latency below 200ms. See `docs/load-test-report.md` for the exact run and historical benchmark pair.
 
 ## Quick start (one command)
 
@@ -35,7 +43,7 @@ npm run dev -w @teamform/web   # web on :5173
 ## Tests
 
 ```bash
-npm test              # 34 API tests: rules, authz, validation, idempotency,
+npm test              # 99 API tests: rules, authz, validation, idempotency,
                       # and concurrency proofs (50 racers, 1 seat, exactly 1 winner)
 ```
 
@@ -43,7 +51,7 @@ npm test              # 34 API tests: rules, authz, validation, idempotency,
 
 ```bash
 npm run chaos         # storms joins, KILLS the API mid-flight, then proves
-                      # every DB invariant still holds (scripts/check-invariants.mjs)
+                      # six checked DB invariants hold (scripts/check-invariants.mjs)
 ```
 
 ## Load test

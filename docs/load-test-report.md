@@ -209,3 +209,8 @@ For an external target use the guarded manual workflow
 `.github/workflows/loadtest.yml`: it refuses Vercel hosts outright (vendor
 policy above) and requires typing CONFIRMED for any other external host after
 verifying the host permits load testing.
+
+
+## 2 November 2026: post-sanitization CI run
+
+Source `35f54a6` adds history-provenance documentation after a token-only history rewrite; application code is unchanged from original `8e46e34` (rewritten `17c1fec`). Run https://github.com/Adithkp03/teamform/actions/runs/41403853587 failed the mixed workload at read p95 **206.47ms** against unchanged `p(95)<200`. It completed 57,459 HTTP requests with 0 failures, 114,816/114,816 checks passing and 12 full mutation cycles. k6 exited 99. This is a measured latency miss; runner variation is a hypothesis, not an established explanation. Prior passing benchmark pairs remain historical results, not a guarantee or a measurement of this run. No production load test was performed.
