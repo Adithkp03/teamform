@@ -10,11 +10,11 @@ h1, h2, h3 { @apply text-slate-900; letter-spacing: -.025em; }
 .btn-primary { @apply btn bg-accent text-white hover:bg-accentDim; box-shadow: 0 3px 8px #3456c91a; }
 .btn-ghost, .btn-secondary { @apply btn border border-line bg-white text-slate-700 hover:border-accent hover:bg-blue-50 hover:text-accent; }
 .btn-danger { @apply btn border border-danger/30 text-danger hover:bg-danger/5; }
-.card { @apply rounded-2xl border border-line bg-panel p-5; box-shadow: 0 3px 14px #23355b05; }
+.card { @apply min-w-0 rounded-2xl border border-line bg-panel p-5; box-shadow: 0 3px 14px #23355b05; overflow-wrap: anywhere; }
 .input { @apply min-h-[46px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 placeholder-slate-500; transition: border-color .15s, box-shadow .15s; }
 .input:focus { border-color: #3456c9; box-shadow: 0 0 0 3px #3456c914; }
 .label { @apply mb-2 block text-sm font-medium text-slate-700; }
-.badge { @apply inline-block rounded-md border border-line bg-slate-50 px-2 py-1 text-xs font-medium text-slate-600; }
+.badge { @apply inline-block max-w-full rounded-md border border-line bg-slate-50 px-2 py-1 text-xs font-medium text-slate-600; overflow-wrap: anywhere; }
 .skip-link { @apply sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-accent focus:px-3 focus:py-2 focus:text-white; }
 /* Existing page metadata classes share the new light-theme contrast floor. */
 .text-slate-400, .text-slate-300 { color: #59677d; }
@@ -22,10 +22,10 @@ h1, h2, h3 { @apply text-slate-900; letter-spacing: -.025em; }
 .text-ink { color: #fff; }
 .app-header { @apply border-b border-line bg-white; }
 .brand-mark { @apply inline-flex h-9 w-9 items-center justify-center rounded-xl bg-accent text-lg font-bold text-white; }
-.page-heading { @apply text-3xl font-bold sm:text-4xl; line-height: 1.15; }
+.page-heading { @apply text-3xl font-bold sm:text-4xl; line-height: 1.15; overflow-wrap: anywhere; }
 .eyebrow { @apply text-xs font-semibold uppercase tracking-[.16em] text-accent; }
 .avatar { @apply flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-sm font-bold text-accent; }
-.team-card { @apply flex h-full flex-col; transition: transform .15s, box-shadow .15s, border-color .15s; }
+.team-card { @apply flex h-full min-w-0 flex-col; transition: transform .15s, box-shadow .15s, border-color .15s; }
 .team-card:hover { border-color: #aabbed; box-shadow: 0 8px 24px #3456c90c; transform: translateY(-2px); }
 .auth-layout { @apply mx-auto grid max-w-5xl gap-8 py-6 lg:grid-cols-2 lg:gap-16 lg:py-12; }
 .auth-story { @apply rounded-3xl bg-[#eaf0ff] p-7 sm:p-10; }
