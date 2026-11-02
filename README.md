@@ -20,7 +20,7 @@ Live app: https://teamform-web.vercel.app
 
 Verification/password-reset email delivery is not configured. Mailjet closed the new account during setup; no working provider is claimed.
 
-Historical CI results are preserved with their original tested source IDs. See `docs/history/` for the pre-publication token cleanup and old-to-new commit mapping. On sanitized/provenance commit `35f54a6`, CI, E2E and Chaos passed, but the mixed-load read p95 was **206.47ms**, missing the unchanged **<200ms** threshold. All 114,816 checks passed and no HTTP request failed in that mixed run. This does not establish repeatable mixed-load latency below 200ms. See `docs/load-test-report.md` for the exact run and historical benchmark pair.
+Historical CI results are preserved with their original tested source IDs. See `docs/history/` for the pre-publication token cleanup and old-to-new commit mapping. On sanitized/provenance commit `35f54a6`, CI, E2E and Chaos passed, but the mixed-load read p95 was **206.47ms**, missing the unchanged **<200ms** threshold. All 114,816 checks passed and no HTTP request failed in that mixed run. This does not establish repeatable mixed-load latency below 200ms. See `docs/load-test-report.md` for the exact run and historical benchmark pair. A later sample on `3868857` passed with board p95 40.62ms and mixed read p95 47.28ms; 103 API tests, five browser tests and the crash-recovery drill passed. These are isolated-CI results, not production throughput or proof that the earlier variation is explained.
 
 ## Quick start (one command)
 

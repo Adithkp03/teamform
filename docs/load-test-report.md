@@ -214,3 +214,18 @@ verifying the host permits load testing.
 ## 2 November 2026: post-sanitization CI run
 
 Source `35f54a6` adds history-provenance documentation after a token-only history rewrite; application code is unchanged from original `8e46e34` (rewritten `17c1fec`). Run https://github.com/Adithkp03/teamform/actions/runs/41403853587 failed the mixed workload at read p95 **206.47ms** against unchanged `p(95)<200`. It completed 57,459 HTTP requests with 0 failures, 114,816/114,816 checks passing and 12 full mutation cycles. k6 exited 99. This is a measured latency miss; runner variation is a hypothesis, not an established explanation. Prior passing benchmark pairs remain historical results, not a guarantee or a measurement of this run. No production load test was performed.
+
+
+## 2 November 2026: distinct repeat and in-flight-read optimization samples
+
+All following measurements use the isolated CI stack and full seed, not production. The threshold remains `p(95)<200`.
+
+| Tested source | Run | Board p95 / requests | Mixed read p95 / requests | Mixed checks | Full cycles | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| `35f54a6` | https://github.com/Adithkp03/teamform/actions/runs/41403853587 | 74.13ms / 94,993 | 206.47ms / 57,459 | 114,816/114,816 | 12 | Mixed latency threshold missed |
+| `0d0b5aa` | https://github.com/Adithkp03/teamform/actions/runs/41404383482 | 23.06ms / 302,394 | 36.20ms / 245,134 | 490,138/490,138 | 16 | Passed |
+| `3868857` | https://github.com/Adithkp03/teamform/actions/runs/41405128834 | 40.62ms / 170,549 | 47.28ms / 155,892 | 311,654/311,654 | 16 | Passed |
+
+Every board/mixed sample in this table recorded 0.000% HTTP failures. `35f54a6` and `0d0b5aa` have identical application code: their spread is observed run-to-run variability, not an established explanation of its cause. `3868857` shares concurrent cache-miss reads for the same key and generation, with authentication still before lookup, unchanged TTL and post-commit invalidation. Four regression tests cover sharing, invalidation races, failed-loader retry and bounded bookkeeping. All 103 API tests, five browser tests and the crash-recovery drill passed on this source.
+
+A separate small local diagnostic (existing local test dataset, not the full seed) observed 100 simultaneous cold-cache reads issue 200 SQL queries before sharing and two afterward. One local p95 pair was 105.44ms before / 33.45ms after; warm reads issued zero SQL queries. This supports duplicate-query elimination, not a production-throughput claim or attribution of the earlier CI miss. The optimized hosted result is slower than the faster pre-change sample. A passing sample does not prove repeatable latency or a production guarantee.
