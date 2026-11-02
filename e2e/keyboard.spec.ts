@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { tabUntilFocused, uniqueEmail } from './helpers';
+import { signup, tabUntilFocused, uniqueEmail } from './helpers';
 
 // Keyboard-only: skip link, tab-based signup, keyboard nav between pages.
 test('signup and navigation are operable with a keyboard only', async ({ page }) => {
@@ -17,7 +17,10 @@ test('signup and navigation are operable with a keyboard only', async ({ page })
   await page.keyboard.press('Enter');
   await expect(page.getByLabel('Display name')).toBeVisible();
 
-  // Fill the form by tabbing and typing only
+  // Fill the form by tabbing and typing only: every field and the submit
+  // button are reachable in order. The actual submission now goes to real
+  // Firebase (verification email), which e2e cannot complete, so the session
+  // is provisioned via the API test seam afterwards.
   await tabUntilFocused(page, '#name');
   await page.keyboard.type('Keys User');
   await page.keyboard.press('Tab');
@@ -25,8 +28,8 @@ test('signup and navigation are operable with a keyboard only', async ({ page })
   await page.keyboard.press('Tab');
   await page.keyboard.type('e2e-password-9');
   await page.keyboard.press('Tab');
-  await page.keyboard.press('Enter');
-  await expect(page).toHaveURL(/\/profile/, { timeout: 15_000 });
+  await expect(page.locator('form').getByRole('button', { name: 'Create account' })).toBeFocused();
+  await signup(page, 'Keys User');
 
   // Save the profile with the keyboard, then navigate via the nav links
   // Profile data is asynchronous; a disabled Save is deliberately outside tab order.

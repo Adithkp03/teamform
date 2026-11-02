@@ -196,7 +196,7 @@ export default function Board() {
                 <p className="mt-2 flex flex-wrap gap-1">{t.wanted_skills.map((s: string) => <span key={s} className="badge">{s}</span>)}</p>
               )}
               {reasons.length > 0 && (
-                <p className="mt-2 text-xs text-emerald-600" aria-label="Why this team matches you">{reasons.join(' · ')}</p>
+                <p className="mt-2 text-xs text-emerald-700" aria-label="Why this team matches you">{reasons.join(' · ')}</p>
               )}
               <div className="mt-auto flex gap-2 pt-5">
                 {state === 'sent' ? (
@@ -233,7 +233,7 @@ export default function Board() {
               <p className="text-xs text-slate-400">{p.timezone}</p>
               <p className="mt-2 flex flex-wrap gap-1">{(p.skills ?? []).map((s: string) => <span key={s} className="badge">{s}</span>)}</p>
               {reasons.length > 0 && (
-                <p className="mt-2 text-xs text-emerald-600" aria-label="Why this person matches you">{reasons.join(' · ')}</p>
+                <p className="mt-2 text-xs text-emerald-700" aria-label="Why this person matches you">{reasons.join(' · ')}</p>
               )}
             </li>
           ); })}

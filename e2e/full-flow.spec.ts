@@ -28,14 +28,14 @@ test('full team-formation flow end to end', async ({ browser }) => {
   // B joins with the invite code
   await B.goto('/board');
   await B.getByRole('textbox', { name: 'Invite code' }).fill(inviteCode);
-  await B.getByRole('button', { name: 'Join team' }).click();
+  await B.getByRole('button', { name: 'Join with code' }).click();
   await expect(B).toHaveURL(/\/team\//);
   await expect(B.getByText('2/4 members')).toBeVisible();
 
   // C sends a join request; A accepts as leader
   await C.goto('/board');
   await C.getByRole('button', { name: 'Request to join' }).first().click();
-  await expect(C.getByText('Request sent to the team leader')).toBeVisible();
+  await expect(C.getByText('Request sent - the team leader will review it.')).toBeVisible();
   await A.reload();
   await expect(A.locator('li p.font-medium', { hasText: 'Flow C' }).first()).toBeVisible();
   await A.getByRole('button', { name: 'Accept' }).click();

@@ -12,11 +12,11 @@ test('light layout fits phone and desktop; search filters loaded cards', async (
   await page.screenshot({ path: testInfo.outputPath('teamform-light-team.png'), fullPage: true });
   await page.goto('/board');
   await expect(page.getByRole('link', { name: 'Design Explorers', exact: true })).toBeVisible();
-  await page.getByLabel('Search loaded results').fill('Design Explorers');
+  await page.getByLabel('Search the whole board').fill('Design Explorers');
   await expect(page.getByRole('link', { name: 'Design Explorers', exact: true })).toBeVisible();
-  await page.getByLabel('Search loaded results').fill('no-match-this-name');
+  await page.getByLabel('Search the whole board').fill('no-match-this-name');
   await expect(page.getByRole('link', { name: 'Design Explorers', exact: true })).toHaveCount(0);
-  await page.getByLabel('Search loaded results').fill('');
+  await page.getByLabel('Search the whole board').fill('');
   await page.getByRole('button', { name: 'Load more teams' }).click();
   await expect(page.getByRole('link', { name: 'Design Explorers', exact: true })).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Load more teams' })).toHaveCount(0);

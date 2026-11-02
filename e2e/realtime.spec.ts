@@ -29,7 +29,7 @@ test('board and team pages update live across sessions without refresh', async (
   await expect(A.getByText('1/4 members')).toBeVisible();
   await C.goto('/board');
   await C.getByRole('textbox', { name: 'Invite code' }).fill(inviteCode);
-  await C.getByRole('button', { name: 'Join team' }).click();
+  await C.getByRole('button', { name: 'Join with code' }).click();
   await expect(C).toHaveURL(/\/team\//);
   await expect(A.getByText('2/4 members')).toBeVisible({ timeout: 10_000 });
   await expect(A.getByText('Live C')).toBeVisible({ timeout: 10_000 });
