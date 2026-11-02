@@ -50,24 +50,36 @@ export default function Team() {
         {team.wanted_skills?.length > 0 && (
           <p className="mt-2 flex flex-wrap gap-1">{team.wanted_skills.map((s: string) => <span key={s} className="badge">{s}</span>)}</p>
         )}
-        {member_count < team.team_size_min && (
-          <p className="mt-2 text-xs text-warn">Forming: needs at least {team.team_size_min} members.</p>
-        )}
+        <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm" aria-label="Team status">
+          <div><dt className="inline text-slate-400">Seats: </dt><dd className="inline font-medium">{member_count}/{team.team_size_max} taken{team.team_size_max > member_count ? `, ${team.team_size_max - member_count} open` : ''}</dd></div>
+          <div><dt className="inline text-slate-400">Range: </dt><dd className="inline font-medium">{team.team_size_min}-{team.team_size_max}</dd></div>
+          <div><dt className="inline text-slate-400">Status: </dt><dd className={`inline font-medium ${member_count < team.team_size_min ? 'text-warn' : 'text-emerald-700'}`}>{member_count < team.team_size_min ? `Forming - needs ${team.team_size_min - member_count} more` : full ? 'Full' : 'Ready'}</dd></div>
+          <div><dt className="inline text-slate-400">Leader: </dt><dd className="inline font-medium">{members.find((m: any) => m.role === 'leader')?.display_name ?? 'Unknown'}</dd></div>
+          {expiresIn !== null && <div><dt className="inline text-slate-400">Invite expires: </dt><dd className="inline font-medium">~{expiresIn}h</dd></div>}
+        </dl>
       </div>
 
       {is_member && (
-        <div className="card space-y-2" aria-label="Invite code">
-          <h2 className="font-semibold">Invite code</h2>
-          <p className="font-mono text-lg tracking-[0.3em] text-accent">{team.invite_code}</p>
-          <p className="text-xs text-slate-400">Expires in ~{expiresIn}h. Share it with people you trust.</p>
-          <div className="flex gap-2">
-            <button className="btn-ghost" onClick={() => { navigator.clipboard.writeText(team.invite_code); toast('Copied'); }}>Copy</button>
-            {is_leader && <button className="btn-ghost" onClick={() => act(`/api/teams/${id}/invite/rotate`, 'New code generated')}>Rotate code</button>}
+        <section className="card space-y-3 border-l-4 border-l-accent" aria-label="Invite members">
+          <h2 className="font-semibold">Invite members</h2>
+          <ol className="list-decimal space-y-1 pl-5 text-sm text-slate-600">
+            <li>Share this invite code. They open TeamForm, pick <strong>Join with code</strong> on the board, and enter it.</li>
+            <li>Or they find this team on the board and tap <strong>Request to join</strong> - {is_leader ? 'you accept them below' : 'the leader accepts them here'}.</li>
+          </ol>
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="font-mono text-lg tracking-[0.3em] text-accent" aria-label={`Invite code ${team.invite_code}`}>{team.invite_code}</p>
+            <button className="btn-primary" onClick={() => { navigator.clipboard.writeText(team.invite_code); toast('Invite code copied'); }}>Copy code</button>
+            <button className="btn-ghost" onClick={() => {
+              navigator.clipboard.writeText(`Join my team "${team.name}" on TeamForm: open the app, choose "Join with code" on the board, and enter ${team.invite_code}`);
+              toast('Invite message copied - paste it anywhere');
+            }}>Copy invite message</button>
+            {is_leader && <button className="btn-ghost" onClick={() => act(`/api/teams/${id}/invite/rotate`, 'New code generated - the old one stopped working')}>Rotate code</button>}
           </div>
-        </div>
+          <p className="text-xs text-slate-400">Expires in ~{expiresIn}h. Only people you share it with can use it.</p>
+        </section>
       )}
 
-      <section aria-label="Members">
+      <section aria-label="Members" aria-live="polite">
         <h2 className="mb-2 font-semibold">Members</h2>
         <ul className="grid gap-2 sm:grid-cols-2">
           {members.map((m: any) => (
@@ -87,7 +99,7 @@ export default function Team() {
       </section>
 
       {is_leader && pending_requests.length > 0 && (
-        <section aria-label="Pending join requests">
+        <section aria-label="Pending join requests" aria-live="polite">
           <h2 className="mb-2 font-semibold">Join requests ({pending_requests.length})</h2>
           <ul className="space-y-2">
             {pending_requests.map((r: any) => (

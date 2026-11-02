@@ -21,9 +21,9 @@ test('full team-formation flow end to end', async ({ browser }) => {
   await A.getByLabel('Team name').fill('Flow Team');
   await A.getByRole('button', { name: 'Create team' }).click();
   await expect(A).toHaveURL(/\/team\//);
-  const inviteCode = (await A.locator('[aria-label="Invite code"] p.font-mono').innerText()).trim();
+  const inviteCode = (await A.locator('[aria-label="Invite members"] p.font-mono').innerText()).trim();
   expect(inviteCode.length).toBeGreaterThanOrEqual(8);
-  await expect(A.getByText('Forming: needs at least 2 members.')).toBeVisible();
+  await expect(A.getByText('Forming - needs 1 more')).toBeVisible();
 
   // B joins with the invite code
   await B.goto('/board');

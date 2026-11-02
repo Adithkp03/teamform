@@ -23,7 +23,7 @@ test('board and team pages update live across sessions without refresh', async (
   await expect(A.getByText('Live Team')).toBeVisible({ timeout: 10_000 });
 
   // A opens the team page; C joins by code -> member list updates without reload
-  const inviteCode = (await B.locator('[aria-label="Invite code"] p.font-mono').innerText()).trim();
+  const inviteCode = (await B.locator('[aria-label="Invite members"] p.font-mono').innerText()).trim();
   await A.getByRole('link', { name: 'View' }).first().click();
   await expect(A).toHaveURL(/\/team\//);
   await expect(A.getByText('1/4 members')).toBeVisible();

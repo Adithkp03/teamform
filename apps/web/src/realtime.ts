@@ -12,10 +12,26 @@ let sseActive = false;
 
 import { getToken, refreshAccessToken } from './api';
 
+// Coarse live-updates connection state for the UI banner.
+type ConnState = 'live' | 'reconnecting' | 'polling';
+const connListeners = new Set<(s: ConnState) => void>();
+let connState: ConnState = 'polling';
+function setConnState(s: ConnState) {
+  if (s === connState) return;
+  connState = s;
+  connListeners.forEach((cb) => cb(s));
+}
+export function subscribeConnectionState(cb: (s: ConnState) => void): () => void {
+  connListeners.add(cb);
+  cb(connState);
+  return () => connListeners.delete(cb);
+}
+
 export function subscribeBoardChanges(onChange: () => void, token: string | null): () => void {
   const apiUrl = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
   if (!token) {
     sseActive = false;
+    setConnState('polling');
     const poll = setInterval(onChange, 15_000);
     return () => clearInterval(poll);
   }
@@ -45,6 +61,7 @@ export function subscribeBoardChanges(onChange: () => void, token: string | null
       }
       if (!res.ok || !res.body) throw new Error(`events ${res.status}`);
       attempt = 0;
+      setConnState('live');
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = '';
@@ -71,6 +88,7 @@ export function subscribeBoardChanges(onChange: () => void, token: string | null
       // backoff after real failures. The cursor (or a fresh `sync`) covers
       // anything missed while disconnected.
       sseActive = false;
+      setConnState('reconnecting');
       const wait = rotated ? 100 : Math.min(15_000, 500 * 2 ** attempt++);
       rotated = false;
       retry = setTimeout(connect, wait);
@@ -79,7 +97,7 @@ export function subscribeBoardChanges(onChange: () => void, token: string | null
   void connect();
 
   const poll = setInterval(onChange, 60_000);
-  return () => { closed = true; sseActive = false; clearInterval(poll); clearTimeout(retry); ctrl?.abort(); };
+  return () => { closed = true; sseActive = false; setConnState('polling'); clearInterval(poll); clearTimeout(retry); ctrl?.abort(); };
 }
 
 export const isRealtime = () => sseActive;

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import Login from './pages/Login';
@@ -5,6 +6,7 @@ import Profile from './pages/Profile';
 import Board from './pages/Board';
 import Team from './pages/Team';
 import Suggestions from './pages/Suggestions';
+import { subscribeConnectionState } from './realtime';
 
 function Nav() {
   const { token, logout } = useAuth();
@@ -29,12 +31,24 @@ function Nav() {
   );
 }
 
+function LiveState() {
+  const [state, setState] = useState<'live' | 'reconnecting' | 'polling'>('polling');
+  useEffect(() => subscribeConnectionState(setState), []);
+  if (state !== 'reconnecting') return null;
+  return (
+    <div role="status" className="bg-amber-50 px-4 py-1.5 text-center text-xs font-medium text-amber-800">
+      Connection to live updates dropped - reconnecting. You can keep working; changes will catch up.
+    </div>
+  );
+}
+
 export default function App() {
   const { token } = useAuth();
   return (
     <div className="min-h-screen">
       <a href="#main" className="skip-link">Skip to content</a>
       <Nav />
+      <LiveState />
       <main id="main" className="mx-auto max-w-7xl px-4 py-7 sm:px-8 sm:py-10">
         <Routes>
           <Route path="/login" element={token ? <Navigate to="/board" replace /> : <Login />} />
