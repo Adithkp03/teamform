@@ -9,7 +9,7 @@ import {
   revokeRefreshToken, revokeAllRefreshTokens, issueActionToken, consumeActionToken,
 } from '../auth.js';
 import {
-  verifyFirebaseIdToken, redeemFirebaseRefreshToken, encryptRefreshToken, decryptRefreshToken,
+  verifyFirebaseIdToken, firebaseTestMode, redeemFirebaseRefreshToken, encryptRefreshToken, decryptRefreshToken,
 } from '../firebase.js';
 import { createHash } from 'node:crypto';
 const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
@@ -100,7 +100,9 @@ export default async function authRoutes(app: FastifyInstance) {
       firebase_refresh_token: z.string().min(1).max(4096),
       display_name: z.string().trim().min(1).max(80).optional(),
     }), req.body);
-    await rateLimit(`auth:${req.ip}`, 10, 60);
+    // The offline e2e seam provisions many users from one IP; the production
+    // limit stays 10/min, test mode raises it so suites do not flake on 429.
+    await rateLimit(`auth:${req.ip}`, firebaseTestMode() ? 1000 : 10, 60);
     const identity = await verifyFirebaseIdToken(body.id_token);
     if (!identity.email) throw errors.unauthorized();
     if (identity.email_verified !== true) {
@@ -194,7 +196,9 @@ export default async function authRoutes(app: FastifyInstance) {
       legacy_email: z.string().email().max(320).optional(),
       legacy_password: z.string().min(1).max(200).optional(),
     }), req.body);
-    await rateLimit(`auth:${req.ip}`, 10, 60);
+    // The offline e2e seam provisions many users from one IP; the production
+    // limit stays 10/min, test mode raises it so suites do not flake on 429.
+    await rateLimit(`auth:${req.ip}`, firebaseTestMode() ? 1000 : 10, 60);
     const identity = await verifyFirebaseIdToken(body.id_token);
     if (!identity.email) throw errors.unauthorized();
     if (identity.email_verified !== true) {
@@ -419,6 +423,18 @@ export default async function authRoutes(app: FastifyInstance) {
   app.put('/api/me', { preHandler: authenticate }, async (req: any) => {
     const body = parse(profileSchema, req.body);
     await rateLimit(`profile:${req.userId}`, 20, 60);
+    // Reconcile display timezone with the offset used for match scoring: when
+    // the name is a valid IANA zone, the server's tz database wins, so a
+    // profile can never display one timezone while scoring on another offset.
+    // Invalid/free-form names keep the client-supplied offset.
+    let offset = body.utc_offset_minutes;
+    try {
+      const tz = await pool.query(
+        `SELECT round(EXTRACT(EPOCH FROM (now() AT TIME ZONE $1 - now() AT TIME ZONE 'UTC')) / 60)::int AS off`,
+        [body.timezone],
+      );
+      if (tz.rows[0]) offset = tz.rows[0].off;
+    } catch { /* unrecognized zone name: keep client-supplied offset */ }
     const { rows } = await pool.query(
       `INSERT INTO profiles (id, display_name, skills, timezone, utc_offset_minutes, looking_for_team, last_active_at)
        VALUES ($1, $2, $3, $4, $5, $6, now())
@@ -426,7 +442,7 @@ export default async function authRoutes(app: FastifyInstance) {
          timezone = EXCLUDED.timezone, utc_offset_minutes = EXCLUDED.utc_offset_minutes,
          looking_for_team = EXCLUDED.looking_for_team, last_active_at = now()
        RETURNING *`,
-      [req.userId, body.display_name, body.skills, body.timezone, body.utc_offset_minutes, body.looking_for_team],
+      [req.userId, body.display_name, body.skills, body.timezone, offset, body.looking_for_team],
     );
     return { profile: rows[0] };
   });

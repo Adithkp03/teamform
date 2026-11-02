@@ -32,6 +32,11 @@ function testModeAllowed(): boolean {
   return process.env.FIREBASE_TEST_MODE === 'true' && !prodLike();
 }
 
+/** True only when the offline seam is enabled in a non-production environment. */
+export function firebaseTestMode(): boolean {
+  return testModeAllowed();
+}
+
 function projectId(): string {
   const pid = process.env.FIREBASE_PROJECT_ID;
   if (!pid) throw errors.unavailable('firebase_not_configured', 'Sign-in is not configured on this deployment');

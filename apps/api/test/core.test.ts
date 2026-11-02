@@ -30,6 +30,25 @@ describe('auth & profiles', () => {
     expect(get.json().profile.skills).toEqual(['react', 'node']);
   });
 
+  test('profile write reconciles utc offset with a valid IANA timezone', async () => {
+    const u = await makeUser('Tz Check');
+    // Mismatched pair: Kolkata name with a Pacific offset. The zone name wins.
+    await app.inject({
+      method: 'PUT', url: '/api/me', headers: auth(u.token),
+      payload: { display_name: 'Tz Check', skills: [], timezone: 'Asia/Kolkata', utc_offset_minutes: -480 },
+    });
+    const get = await app.inject({ method: 'GET', url: '/api/me', headers: auth(u.token) });
+    expect(get.json().profile.utc_offset_minutes).toBe(330);
+    // Free-form zone name: client offset is kept, no 500.
+    const u2 = await makeUser('Tz Free');
+    const put2 = await app.inject({
+      method: 'PUT', url: '/api/me', headers: auth(u2.token),
+      payload: { display_name: 'Tz Free', skills: [], timezone: 'Mars/Olympus', utc_offset_minutes: -480 },
+    });
+    expect(put2.statusCode).toBe(200);
+    expect(put2.json().profile.utc_offset_minutes).toBe(-480);
+  });
+
   test('invalid payloads get 400, not 500', async () => {
     const u = await makeUser();
     const res = await app.inject({ method: 'PUT', url: '/api/me', headers: auth(u.token), payload: { display_name: '' } });
