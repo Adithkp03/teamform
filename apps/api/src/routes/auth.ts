@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { pool } from '../db.js';
 import { rateLimit } from '../ratelimit.js';
 import { authenticate, signToken, issueRefreshToken, rotateRefreshToken, revokeRefreshToken } from '../auth.js';
-import { verifyFirebaseIdToken, firebaseTokensValidAfter } from '../firebase.js';
+import { verifyFirebaseIdToken, checkFirebaseRefreshToken } from '../firebase.js';
 import { parse } from '../util.js';
 import { errors } from '../errors.js';
 
@@ -39,6 +39,7 @@ export default async function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/firebase', async (req) => {
     const body = parse(z.object({
       id_token: z.string().min(1).max(8192),
+      firebase_refresh_token: z.string().min(1).max(4096).optional(),
       display_name: z.string().trim().min(1).max(80).optional(),
     }), req.body);
     await rateLimit(`auth:${req.ip}`, 10, 60);
@@ -101,6 +102,15 @@ export default async function authRoutes(app: FastifyInstance) {
     }
 
     const session = await issueRefreshToken(userId);
+    // Store the Firebase refresh token on the session family's first row so
+    // later rotations can prove the Firebase credential is still valid (see
+    // checkFirebaseRefreshToken). Never exposed to clients.
+    if (body.firebase_refresh_token) {
+      await pool.query(
+        `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
+        [body.firebase_refresh_token, session.id],
+      );
+    }
     return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId };
   });
 
@@ -113,22 +123,22 @@ export default async function authRoutes(app: FastifyInstance) {
     const { userId, token, familyId } = await rotateRefreshToken(body.refresh_token);
 
     // Firebase-side revocation: a password reset/change (or explicit
-    // revocation) on the linked Firebase account invalidates app sessions
-    // minted BEFORE that moment at their next rotation, so a reset actually
-    // signs out stolen sessions instead of only future logins. The check is
-    // one Admin API call per rotation (15-minute cadence per client), not on
-    // the request hot path.
+    // revocation) on the linked Firebase account invalidates the Firebase
+    // refresh token stored on this family, so the redemption below fails at
+    // the next rotation and we revoke the whole app session family - a reset
+    // actually signs out stolen sessions instead of only future logins.
+    // Access tokens live out their short TTL (bounded by the access-token
+    // expiry, documented). One Google call per rotation, not per request.
+    // Fail-open on Google outage (retry-safe), fail-closed on invalid.
     const { rows: fam } = await pool.query(
-      `SELECT p.firebase_uid, MIN(t.created_at) AS family_started
-       FROM auth_refresh_tokens t JOIN profiles p ON p.id = t.user_id
-       WHERE COALESCE(t.family_id, t.id) = $1 GROUP BY p.firebase_uid`,
+      `SELECT firebase_refresh_token FROM auth_refresh_tokens
+       WHERE COALESCE(family_id, id) = $1 AND firebase_refresh_token IS NOT NULL LIMIT 1`,
       [familyId],
     );
-    const firebaseUid = fam[0]?.firebase_uid;
-    if (firebaseUid) {
-      const validAfter = await firebaseTokensValidAfter(firebaseUid);
-      const familyStarted = fam[0]?.family_started ? new Date(fam[0].family_started).getTime() / 1000 : null;
-      if (validAfter !== null && familyStarted !== null && validAfter > familyStarted + 1) {
+    const fbRefresh = fam[0]?.firebase_refresh_token;
+    if (fbRefresh) {
+      const check = await checkFirebaseRefreshToken(fbRefresh);
+      if (!check.ok && check.reason === 'invalid') {
         await pool.query(
           `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
           [familyId],

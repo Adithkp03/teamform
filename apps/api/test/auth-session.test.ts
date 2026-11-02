@@ -243,21 +243,30 @@ test('logout after rotation kills the family: a grace replay cannot resurrect it
 
 test('firebase password reset/change invalidates app sessions at next rotation', async () => {
   const email = uniq('revoke');
-  const uid = `test-${email}`;
-  const s = await signup(email);
+  const s = await app.inject({ method: 'POST', url: '/api/auth/firebase', payload: { id_token: testIdToken(email), display_name: 'Tester', firebase_refresh_token: `fb-refresh-${email}` } });
   expect(s.statusCode).toBe(200);
   const r1 = s.json().refresh_token;
-  // rotation works while Firebase shows no revocation
+  // rotation works while Firebase accepts the stored refresh token
   const ok = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } });
   expect(ok.statusCode).toBe(200);
   const r2 = ok.json().refresh_token;
-  // Firebase reports a credential reset AFTER the session family started
-  setFirebaseTestHooks(null, async (u) => (u === uid ? Date.now() / 1000 + 60 : null));
+  // password reset/change (or disable) on Firebase revokes that refresh token
+  setFirebaseTestHooks(null, async () => false);
   expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r2 } })).statusCode).toBe(401);
-  // whole family dead: the just-minted successor cannot continue either
+  // whole family dead: the earlier token cannot continue either
   const r3 = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } });
   expect(r3.statusCode).toBe(401);
   // a fresh sign-in after the "reset" still works
   setFirebaseTestHooks(null, null);
   expect((await signup(email)).statusCode).toBe(200);
+});
+
+test('google outage on the refresh-token check does not lock out the session', async () => {
+  const email = uniq('outage');
+  const s = await app.inject({ method: 'POST', url: '/api/auth/firebase', payload: { id_token: testIdToken(email), display_name: 'Tester', firebase_refresh_token: `fb-refresh-${email}` } });
+  expect(s.statusCode).toBe(200);
+  // 'unavailable' (network/5xx) is retry-safe: rotation proceeds
+  setFirebaseTestHooks(null, async () => { throw new Error('unavailable'); });
+  const r = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: s.json().refresh_token } });
+  expect(r.statusCode).toBe(200);
 });
