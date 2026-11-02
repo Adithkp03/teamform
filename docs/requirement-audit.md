@@ -1,4 +1,4 @@
-# PS1 requirement audit (honest status as of commit ff11354; supersedes the dd34f27 version)
+# PS1 requirement audit (reviewed 2 Nov 2026; light-mode revision)
 
 Legend: DONE = implemented + tested/verified; PARTIAL = works, with a stated
 limitation; BLOCKED = cannot be demonstrated in the available environment.
@@ -19,7 +19,7 @@ limitation; BLOCKED = cannot be demonstrated in the available environment.
 | Security: validation | DONE | zod on inputs; Fastify 4xx mapped correctly (empty-JSON-body regression fixed + tested) |
 | Audit log | DONE | every mutation; actor vs subject separated (regression test added) |
 | Teammate suggestions with explained scoring | DONE | scoring string explains each factor; timezone uses utc_offset_minutes only (no Calcutta/Kolkata divergence) |
-| >=20 API tests in CI | DONE | 99 API/integration tests in 8 files (incl. auth-session family rotation, race, sse), counted separately from the chaos drill (one scenario - API killed mid-join-storm - verified against 6 post-crash DB invariants, not 6 tests). Honest CI record: CI FAILED on 532e0b3 (auth-session race test caught a real flaw - a grace-window replay could resurrect a logged-out token family; fixed in ff11354 with a deterministic regression test); earlier claim of 'green on every push' is retracted. |
+| >=20 API tests in CI | DONE | 103 API/integration tests in 8 files (incl. auth-session family rotation, race, sse), counted separately from the chaos drill (one scenario - API killed mid-join-storm - verified against 6 post-crash DB invariants, not 6 tests). Honest CI record: CI FAILED on 532e0b3 (auth-session race test caught a real flaw - a grace-window replay could resurrect a logged-out token family; fixed in ff11354 with a deterministic regression test); earlier claim of 'green on every push' is retracted. |
 | Seed: 10k users / 2k teams | DONE | `db/seed-sql.mjs`; evidence `docs/seed-evidence/`; seed users have no login |
 | Load test: p95 < 200 ms @ 100 concurrent on board | MET locally and on hosted CI / not permitted in production | Local, full seed, repeatable (3 runs): p95 138.4-139.8 ms, ~48.5-49k reqs, 0 failures, raw artifacts + before/after dataset counts in docs/loadtest-local/repeatability-20261101/. Harder local scenario (100 SSE + 100-VU board, 2 instances): p95 149.7 ms, 0 failures. Production: Vercel Hobby policy forbids load tests (Enterprise-only; burst was edge-blocked), so no production p95 is claimed. GitHub-hosted runner: MET at p95=76.78 ms (run #16, 111,668 reqs, 0 failed) after the 1s-TTL board cache (5be6cae); uncached hosted baseline preserved at 375-389 ms (runs #14/#15 with CPU-profile artifact). Earlier green loadtest runs were not trustworthy because the k6 step piped through tee without pipefail masked k6's exit-99 on tainted thresholds (attributed via run #13's job log); the workflow now sets pipefail and adds an explicit gate step that fails the job on any violation, so hosted runs show red honestly until the runner meets 200 ms. Full diagnosis + fix history in docs/load-test-report.md. Mix-scenario runs #26/#27/#28 failed mix_full_cycles>=12 at 11 cycles: root-caused via run 41349816532 job log to a k6 script bug (7-char Idempotency-Key for single-digit VUs -> 400 on 4/15 creates; http_req_failed{expected_response:true} stayed 0/88320), fixed in 532e0b3 (key padding, threshold unchanged); mix run on 532e0b3 (run 41352845393) green, failed_req_rate 0.000%. |
 | React UI, phone + keyboard usable | DONE | mobile 390px + keyboard-only flows verified with screenshots |
@@ -38,8 +38,25 @@ limitation; BLOCKED = cannot be demonstrated in the available environment.
 
 | Deliverable | Status |
 | --- | --- |
-| GitHub repo | DONE (private; visibility flip pending user decision) |
+| GitHub repo | DONE (PUBLIC, authorized and verified 2 Nov 2026): https://github.com/Adithkp03/teamform |
 | Live URL | DONE |
 | Load-test report | DONE (docs/load-test-report.md: local MET headline with correction history, diagnosis, and honest open items for hosted CI + production) |
 | 1-page design doc | DONE (docs/design.md) |
-| <=5 min walkthrough video | PENDING |
+| <=5 min walkthrough video | Revision in progress: replaces earlier v7; new light UI, race-first proof, benchmark caveats |
+
+## Current benchmark evidence (2 Nov 2026)
+
+Read these separately, not as a guaranteed speed improvement. All are isolated full-seed CI, never Vercel production load. Each pair below is board p95 / mixed-read p95.
+
+- `35f54a6`: **74.13 / 206.47 ms**, mixed p95 threshold FAILED, exit 99. https://github.com/Adithkp03/teamform/actions/runs/41403853587
+- `0d0b5aa`: **23.06 / 36.20 ms**, passed, application identical to the preceding run. https://github.com/Adithkp03/teamform/actions/runs/41404383482
+- `3868857`: **40.62 / 47.28 ms**, passed. Local duplicate-read optimization is tested, but these variable hosted samples do not establish its performance effect. https://github.com/Adithkp03/teamform/actions/runs/41405128834
+- Docs-only `d5c913e`: latest completed load workflow before this UI revision also passed. Do not assign one of the preceding measurements to it: https://github.com/Adithkp03/teamform/actions/runs/41405650692
+
+Production p95 remains **unmeasured**. The dataset contains 10k synthetic profiles and 2k teams; the board scenario uses 100 concurrent readers. Mixed workload uses 99 readers + 4 paced mutators. None demonstrates 10k simultaneous users. Email delivery is disabled in production; no durable email queue or 10k-mail simulation is built.
+
+## Light-mode revision verification
+
+Blue/white light interface, responsive navigation, board discovery with loaded-card search, team actions, team workspace, profile and suggestions. Local 320/390px checks and keyboard-only/full-flow/realtime/axe scans are re-run, not assumed from old screenshots. This revision also fixes final-page cursor handling: null next-cursor stays null rather than retaining the previous page cursor.
+
+Current UI revision local verification:103/103API tests (8files),6/6browser tests including keyboard-only, full formation flow, two-session realtime, serious/critical axe scan and320/390px/search/final-cursor regression. A first keyboard run caught profile Save racing its async load; Save now waits for completion and keyboard test awaits that actual readiness before tabbing. Earlier failure is not erased.

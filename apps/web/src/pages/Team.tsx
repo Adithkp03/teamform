@@ -39,10 +39,10 @@ export default function Team() {
   const expiresIn = team.invite_expires_at ? Math.max(0, Math.round((new Date(team.invite_expires_at).getTime() - Date.now()) / 3600000)) : null;
 
   return (
-    <div className="space-y-6">
-      <div className="card">
+    <div className="mx-auto max-w-4xl space-y-6">
+      <div className="card border-t-4 border-t-accent">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h1 className="text-2xl font-bold">{team.name}</h1>
+          <div><p className="eyebrow mb-2">Team workspace</p><h1 className="page-heading">{team.name}</h1></div>
           <span className="badge" aria-label={`${member_count} of ${team.team_size_max} seats taken`}>
             {member_count}/{team.team_size_max} members{full ? ' - full' : ''}
           </span>

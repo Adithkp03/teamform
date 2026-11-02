@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
 import Login from './pages/Login';
 import Reset from './pages/Reset';
@@ -12,12 +12,11 @@ function Nav() {
   const { token, logout } = useAuth();
   const navigate = useNavigate();
   if (!token) return null;
-  const link = ({ isActive }: { isActive: boolean }) =>
-    `rounded px-3 py-2 text-sm ${isActive ? 'bg-accent text-ink font-semibold' : 'text-slate-300 hover:text-accent'}`;
+  const link = ({ isActive }: { isActive: boolean }) => `nav-link ${isActive ? 'active' : ''}`;
   return (
-    <nav aria-label="Main" className="border-b border-line bg-panel">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-1 px-4 py-2">
-        <span className="mr-4 font-bold text-accent">TeamForm</span>
+    <nav aria-label="Main" className="app-header">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-1 px-4 py-3 sm:gap-2 sm:px-8">
+        <Link to="/board" className="mr-2 flex items-center gap-2.5 text-lg font-bold tracking-tight text-slate-900 sm:mr-6"><span className="brand-mark" aria-hidden="true">T</span>TeamForm</Link>
         <NavLink to="/board" className={link}>Board</NavLink>
         <NavLink to="/suggestions" className={link}>Suggestions</NavLink>
         <NavLink to="/profile" className={link}>Profile</NavLink>
@@ -38,7 +37,7 @@ export default function App() {
     <div className="min-h-screen">
       <a href="#main" className="skip-link">Skip to content</a>
       <Nav />
-      <main id="main" className="mx-auto max-w-5xl px-4 py-6">
+      <main id="main" className="mx-auto max-w-7xl px-4 py-7 sm:px-8 sm:py-10">
         <Routes>
           <Route path="/login" element={token ? <Navigate to="/board" replace /> : <Login />} />
           <Route path="/reset" element={<Reset />} />

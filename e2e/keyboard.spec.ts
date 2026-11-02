@@ -29,6 +29,8 @@ test('signup and navigation are operable with a keyboard only', async ({ page })
   await expect(page).toHaveURL(/\/profile/, { timeout: 15_000 });
 
   // Save the profile with the keyboard, then navigate via the nav links
+  // Profile data is asynchronous; a disabled Save is deliberately outside tab order.
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
   await tabUntilFocused(page, 'button::text(Save)', 15);
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/board/, { timeout: 15_000 });

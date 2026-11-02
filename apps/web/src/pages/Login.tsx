@@ -49,9 +49,18 @@ export default function Login() {
   }
 
   return (
-    <div className="mx-auto max-w-md">
-      <h1 className="mb-2 text-2xl font-bold">Sign in to TeamForm</h1>
-      <p className="mb-6 text-sm text-slate-400">Race-proof team formation for hackathons.</p>
+    <div className="auth-layout">
+      <section className="auth-story" aria-label="About TeamForm">
+        <div className="flex items-center gap-2.5 text-lg font-bold"><span className="brand-mark" aria-hidden="true">T</span>TeamForm</div>
+        <p className="eyebrow mt-10">Build together. Start here.</p>
+        <h2 className="mt-4 text-4xl font-bold leading-tight sm:text-5xl">Your next great<br />team starts here.</h2>
+        <p className="mt-5 max-w-sm leading-relaxed text-slate-600">Find people with the skills you need. Form a team, share an invite, and get building.</p>
+        <div className="auth-illustration" aria-hidden="true"><div className="auth-orbit" /><span className="auth-person left-[8%] top-2 bg-[#d8e7ff] text-[#244783]">&lt;/&gt;</span><span className="auth-person right-[6%] top-6 bg-[#ffecd9] text-[#91542a]">Ux</span><span className="auth-person bottom-0 left-[24%] bg-[#e2e0fb] text-[#5b479c]">AI</span><span className="auth-center">T</span></div>
+        <div className="grid gap-3 text-sm text-slate-700"><p><span className="mr-2 text-accent" aria-hidden="true">✓</span>Discover complementary skills</p><p><span className="mr-2 text-accent" aria-hidden="true">✓</span>Leader-approved team requests</p><p><span className="mr-2 text-accent" aria-hidden="true">✓</span>One person. One team. No overbooking.</p></div>
+      </section>
+      <section className="self-center py-2 lg:px-4">
+      <p className="eyebrow mb-3">Your hackathon workspace</p><h1 className="mb-3 text-3xl font-bold">Sign in to TeamForm</h1>
+      <p className="mb-6 text-sm text-slate-400">Welcome back. Pick up where your team left off.</p>
       <div className="mb-4 flex gap-2" role="tablist" aria-label="Sign in mode">
         {((SHOW_DEV_LOGIN ? ['login', 'signup', 'dev'] : ['login', 'signup']) as Array<'login' | 'signup' | 'dev'>).map((m) => (
           <button key={m} role="tab" aria-selected={mode === m} onClick={() => setMode(m)}
@@ -60,7 +69,7 @@ export default function Login() {
           </button>
         ))}
       </div>
-      <form onSubmit={submit} className="card space-y-4">
+      <form onSubmit={submit} className="card space-y-5">
         {mode === 'forgot' && (
           <>
             <p className="text-sm text-slate-400">Enter your account email and we will send a reset link.</p>
@@ -109,6 +118,8 @@ export default function Login() {
         )}
         {mode === 'dev' && <p className="text-xs text-slate-400">Dev login is for local/demo use when the server enables it.</p>}
       </form>
+      <p className="mt-5 text-xs leading-relaxed text-slate-400">Demo note: verification and password-reset email delivery is currently disabled. Your account can still be created.</p>
+      </section>
     </div>
   );
 }

@@ -16,8 +16,8 @@ export default function Suggestions() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Suggested teammates</h1>
-      <p className="text-sm text-slate-400">Ranking: <code className="text-accent">{data.scoring}</code></p>
+      <p className="eyebrow">Made for your skill set</p><h1 className="page-heading">Suggested teammates</h1><p className="text-slate-400">Find a different perspective. Scores explain why each person might fit.</p>
+      <p className="rounded-xl border border-line bg-white p-4 text-sm text-slate-400">Ranking: <code className="text-accent">{data.scoring}</code></p>
       <ul className="grid gap-3 sm:grid-cols-2">
         {data.suggestions.map((s: any) => (
           <li key={s.id} className="card">

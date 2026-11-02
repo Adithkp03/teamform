@@ -64,3 +64,6 @@ report lives in `docs/load-test-report.md`.
 - `docs/design.md` - 1-page design doc: data model, race prevention, trade-offs
 - `docs/research.md` - the literature and real-world failure modes behind the design
 - `docs/load-test-report.md` - measured latency, with methodology and caveats
+
+### Light-mode UX revision (2 Nov 2026)
+Blue/white interface inspired by hackathon-platform information hierarchy, without copied branding. Desktop board discovery + side actions; phone actions move above the long results list. Search is explicitly **loaded-results only**, not a server-wide search. Cursor end-of-list handling is regression-tested. Profile Save waits for initial load. Local verification:103API tests and6browser tests (including keyboard, two-session realtime, accessibility and320/390px layout). Production email remains disabled. Public repo; revised PDFs/video supersede earlier stale-status editions without deleting them.

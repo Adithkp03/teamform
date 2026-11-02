@@ -4,13 +4,13 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: '#0b0f14',
-        panel: '#12181f',
-        line: '#22303c',
-        accent: '#4fd1a5',
-        accentDim: '#2a7d64',
-        warn: '#f6c177',
-        danger: '#eb6f92',
+        ink: '#f5f7fc',
+        panel: '#ffffff',
+        line: '#dbe3ef',
+        accent: '#3456c9',
+        accentDim: '#2743a8',
+        warn: '#8c5100',
+        danger: '#b62c43',
       },
       fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
     },

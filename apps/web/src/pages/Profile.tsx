@@ -14,6 +14,7 @@ export default function Profile() {
   const [skills, setSkills] = useState('');
   const [looking, setLooking] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const offset = -new Date().getTimezoneOffset();
 
@@ -24,7 +25,7 @@ export default function Profile() {
       setLooking(r.profile.looking_for_team);
       setEmail(r.profile.email ?? null);
       setEmailVerified(r.profile.email_verified ?? null);
-    }).catch(() => {});
+    }).catch((e) => toast(e.message, 'error')).finally(() => setLoaded(true));
   }, [token]);
 
   async function save(e: FormEvent) {
@@ -45,8 +46,8 @@ export default function Profile() {
   }
 
   return (
-    <form onSubmit={save} className="card mx-auto max-w-lg space-y-4">
-      <h1 className="text-xl font-bold">Your profile</h1>
+    <form onSubmit={save} className="card mx-auto max-w-2xl space-y-6">
+      <div><p className="eyebrow mb-2">Introduce yourself</p><h1 className="text-3xl font-bold">Your profile</h1><p className="mt-2 text-sm text-slate-400">Help the right teammates find you. Add your skills and availability.</p></div>
       <div>
         <label className="label" htmlFor="dn">Display name</label>
         <input id="dn" className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
@@ -82,7 +83,7 @@ export default function Profile() {
           )}
         </div>
       )}
-      <button className="btn-primary" disabled={busy}>Save</button>
+      <button className="btn-primary" disabled={busy || !loaded}>Save</button>
     </form>
   );
 }

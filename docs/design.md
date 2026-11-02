@@ -17,16 +17,22 @@ Idempotency-Key routes (retries replay the stored response): **create_team, join
 - **Board cache**: the public board payload (identical for every user; no invite codes or join requests in it) is cached in-process for 1s, keyed by `limit`, capped at 32 entries. Auth runs per request before any cache read. Same-instance mutations invalidate after commit (2xx only) with a generation guard against stale repopulation; cross-instance staleness is bounded by the TTL, never dependent on SSE listeners.
 
 ## Security
-bcrypt, 7-day HS256 JWTs sent as an Authorization header (never in URLs, so they stay out of browser history and query-string logs), leader-only mutations server-side, zod validation, per-identity rate limits incl. SSE connect, CORS pinned to the web origin. Invite codes: 10 chars x 32-char alphabet (50 bits) + expiry + join rate limit. Dev-login compiled out in production; seed users have no password hash.
+bcrypt, 15-minute HS256 access JWTs + opaque family-rotated refresh tokens sent as an Authorization header (never in URLs, so they stay out of browser history and query-string logs), leader-only mutations server-side, zod validation, per-identity rate limits incl. SSE connect, CORS pinned to the web origin. Invite codes: 10 chars x 32-char alphabet (50 bits) + expiry + join rate limit. Dev-login compiled out in production; seed users have no password hash.
 
-## Evidence (k6, 100 concurrent, full 10k/2k seed)
-Hot read, cached: local p95 29.7ms; hosted CI 42.99-84.4ms (runs #16-#24, 0 failed; uncached baseline 375-389ms, Postgres-bound). Mixed (103 VUs = 99 readers + 4 paced mutators within rate limits): local p95 45.2ms, 469,770/469,770 checks, 16 cycles, field-level read-your-write, 0 failed; hosted #24 p95 78.1ms, 299,894/299,894 checks. Coexistence (2 instances + 100 SSE + load): p95 31.9ms, 12/12 probes, tail 1.136s. 75 API tests in CI. Vercel Hobby forbids production load testing; no production p95 claimed.
+## Earlier evidence (historical, k6, full 10k/2k seed)
+Hot read, cached: local p95 29.7ms; hosted CI 42.99-84.4ms (runs #16-#24, 0 failed; uncached baseline 375-389ms, Postgres-bound). Mixed (103 VUs = 99 readers + 4 paced mutators within rate limits): local p95 45.2ms, 469,770/469,770 checks, 16 cycles, field-level read-your-write, 0 failed; hosted #24 p95 78.1ms, 299,894/299,894 checks. Coexistence (2 instances + 100 SSE + load): p95 31.9ms, 12/12 probes, tail 1.136s. 103 API tests in CI (8 test files). Vercel Hobby forbids production load testing; no production p95 claimed.
+
+## Current evidence and UI (2 Nov 2026)
+
+Repo is PUBLIC: https://github.com/Adithkp03/teamform . Cursor pagination is implemented (`limit`, independent team/people cursors); the UI loads 24 cards and marks truncated counts with +. Light-mode UI uses blue/white surfaces, responsive cards, keyboard focus, loaded-results search and explicit demo email limits. Production email delivery remains disabled. No simulated mail queue exists.
+
+Distinct CI board/mixed-read p95 pairs: `35f54a6` 74.13/206.47ms (**mixed threshold failed**); identical app `0d0b5aa` 23.06/36.20ms (passed); optimized `3868857` 40.62/47.28ms (passed). Source run URLs and full correction history: docs/load-test-report.md. Docs-only `d5c913e` load workflow also passed; its own metrics are not substituted with earlier values. Variability's cause is unproven. No causal speedup, repeatability or production-capacity claim. **Production p95 is unmeasured.** 10k stored users is not 10k concurrent users; board scenario is100 readers, mixed103 VUs.
 
 ## Trade-offs
 Correctness enforced in the database (slower writes; the locked + unique-constraint paths are proven by the race test and chaos checker, not claimed beyond them). Poll mode: ~1s poll interval for flat DB cost. Board cache: bounded 1s staleness for a ~12x read-cost cut. Free tiers: cold starts and caps, disclosed.
 
 ## With one more week
-Enrollment + hackathon-scoped board, board cursor pagination, suggestion-score tuning against real acceptance data, client-facing rate-limit headers.
+Enrollment + hackathon-scoped board, suggestion-score tuning against real acceptance data, client-facing rate-limit headers.
 
 ## Session and token semantics (post-hardening, exact)
 
