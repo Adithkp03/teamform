@@ -11,14 +11,14 @@ correctness proven under concurrency.
 - **Database**: PostgreSQL 16 (Neon serverless free tier in production, Docker locally) - the correctness backbone
 - **Realtime**: Server-sent events backed by a durable Postgres outbox, polled about once per second in the serverless deployment; optional LISTEN/NOTIFY mode for self-hosted processes; resync on reconnect
 - **Web**: React 18 + Vite + Tailwind; mobile-first, fully keyboard-operable
-- **Tests**: 103 API tests against real Postgres, 5 browser tests (flows, realtime, keyboard and axe), plus one crash-recovery drill checking 6 database invariants
+- **Tests**: 118 API tests against real Postgres, 10 browser tests (flows, realtime, keyboard, axe, zoom, onboarding, edge data), plus one crash-recovery drill checking 6 database invariants
 - **Load test**: k6 (target: p95 < 200 ms on `GET /api/board` at 100 concurrent users)
 
 ## Current deployment and evidence
 
 Live app: https://teamform-web.vercel.app
 
-Verification/password-reset email delivery is not configured. Mailjet closed the new account during setup; no working provider is claimed.
+Authentication moved to Firebase Authentication (Spark free tier, no card): email/password sign-in runs client-side through Firebase, which sends the real verification and password-reset emails, and the client exchanges the Firebase ID token + refresh token at `POST /api/auth/firebase` for the app's short-lived JWT + refresh-token session family. The exchange verifies the ID token against Google server-side, requires `email_verified: true` in the verified token, and binds the presented Firebase refresh token to the same uid before storing it (encrypted) for revocation checks at rotation. Legacy bcrypt accounts keep working through `/api/auth/login`; claiming one into a Firebase identity requires the legacy password or an existing authenticated legacy session plus the verified Firebase identity - email equality alone transfers nothing. End-to-end delivery to a real inbox is verified by the owner post-deploy; free-tier mail can land in spam.
 
 Historical CI results are preserved with their original tested source IDs. See `docs/history/` for the pre-publication token cleanup and old-to-new commit mapping. On sanitized/provenance commit `35f54a6`, CI, E2E and Chaos passed, but the mixed-load read p95 was **206.47ms**, missing the unchanged **<200ms** threshold. All 114,816 checks passed and no HTTP request failed in that mixed run. This does not establish repeatable mixed-load latency below 200ms. See `docs/load-test-report.md` for the exact run and historical benchmark pair. A later sample on `3868857` passed with board p95 40.62ms and mixed read p95 47.28ms; 103 API tests, five browser tests and the crash-recovery drill passed. These are isolated-CI results, not production throughput or proof that the earlier variation is explained.
 
@@ -43,8 +43,9 @@ npm run dev -w @teamform/web   # web on :5173
 ## Tests
 
 ```bash
-npm test              # 103 API tests: rules, authz, validation, idempotency,
-                      # and concurrency proofs (50 racers, 1 seat, exactly 1 winner)
+npm test              # 118 API tests: rules, authz, validation, idempotency,
+                      # firebase exchange/claim, and concurrency proofs
+                      # (50 racers, 1 seat, exactly 1 winner)
 ```
 
 ## Chaos test (bonus)
@@ -66,4 +67,4 @@ report lives in `docs/load-test-report.md`.
 - `docs/load-test-report.md` - measured latency, with methodology and caveats
 
 ### Light-mode UX revision (2 Nov 2026)
-Blue/white interface inspired by hackathon-platform information hierarchy, without copied branding. Desktop board discovery + side actions; phone actions move above the long results list. Search is explicitly **loaded-results only**, not a server-wide search. Cursor end-of-list handling is regression-tested. Profile Save waits for initial load. Local verification:103API tests and6browser tests (including keyboard, two-session realtime, accessibility and320/390px layout). Production email remains disabled. Public repo; revised PDFs/video supersede earlier stale-status editions without deleting them.
+Blue/white interface inspired by hackathon-platform information hierarchy, without copied branding. Desktop board discovery + side actions; phone actions move above the long results list. Search is explicitly **loaded-results only**, not a server-wide search. Cursor end-of-list handling is regression-tested. Profile Save waits for initial load. Local verification: 118 API tests and 10 browser tests (keyboard, two-session realtime, accessibility, 200% zoom, 320/390px layout, onboarding checklist, edge data). Firebase email delivery is configured; real-inbox receipt is owner-verified. Public repo; revised PDFs/video supersede earlier stale-status editions without deleting them.
