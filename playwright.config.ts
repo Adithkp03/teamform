@@ -25,6 +25,7 @@ export default defineConfig({
         DATABASE_URL: DB,
         JWT_SECRET: 'e2e-secret',
         ALLOW_DEV_LOGIN: 'true',
+        FIREBASE_TEST_MODE: 'true',
         EVENTS_POLL_MS: '250',
         MAIL_PROVIDER: 'log',
         APP_ORIGIN: 'http://localhost:3101',
