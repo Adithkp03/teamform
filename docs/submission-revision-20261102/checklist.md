@@ -22,7 +22,7 @@ Adith K P · 3 Nov 2026 · Firebase-auth edition · supersedes checklist v9
 10,000 synthetic profiles/2,000 teams is a dataset size, **not 10,000 simultaneous users**. Board workload 100 readers; mixed 99 readers + 4 paced mutators. Local full-seed board p95 138-140ms, 0 failures. Historical CI pairs (board p95 / mixed p95): `35f54a6` 74.13/206.47 (**mixed FAILED**); identical app `0d0b5aa` 23.06/36.20 (pass); `3868857` 40.62/47.28 (pass). Run links and raw measurements: `docs/load-test-report.md`. Sample variability cause unproven.
 
 ## Current revision checks and deliverables
-Deployed commit `9f683ea` (+ docs-only `df57083`): hosted CI test, e2e, chaos and k6 load all passed on that SHA (runs 41511777781, 41511777767, 41511777766, 41511777921); production health reports it. Migration 0010 (`firebase_uid` + unique index) applied to production and proven on a fresh migration-only database. Walkthrough video v9 (3m08s) supersedes v8; earlier editions retained.
+Deployed app commit `9f683ea`: hosted CI test, e2e, chaos and k6 load all passed on that SHA (runs 41511777781, 41511777767, 41511777766, 41511777921); production health reports it. Migration 0010 (`firebase_uid` + unique index) applied to production and proven on a fresh migration-only database. Walkthrough video v9 (3m08s) supersedes v8; earlier editions retained.
 
 ## Open limits: do not call these done
 - **One owner-verified real-inbox email receipt pending.** Firebase sends verification/reset mail; the exchange is proven against real Google-signed tokens, but end-to-end inbox receipt is owner-verified post-deploy. Free-tier mail can land in spam.

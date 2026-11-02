@@ -24,4 +24,4 @@ Board payload has no invite codes or requests. Auth precedes each cache access. 
 ## Limits and next work
 Free Vercel Hobby + Neon free + Firebase Spark; caps/cold starts remain; free-tier mail can land in spam. One owner-verified real-inbox receipt is still pending for the full migration claim. No durable app-level mail queue or 10k-mail simulation. Single-event scope remains; next: enrollment/scoped board, matching calibration, rate-limit headers. No paid plan/domain/card or organizer submission.
 
-Latest verified deploy: `9f683ea` (+ docs `df57083`) on main; production health matches.
+Latest verified app deploy: `9f683ea` on main; production health matches.
