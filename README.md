@@ -11,7 +11,7 @@ correctness proven under concurrency.
 - **Database**: PostgreSQL 16 (Neon serverless free tier in production, Docker locally) - the correctness backbone
 - **Realtime**: Server-sent events backed by a durable Postgres outbox, polled about once per second in the serverless deployment; optional LISTEN/NOTIFY mode for self-hosted processes; resync on reconnect
 - **Web**: React 18 + Vite + Tailwind; mobile-first, fully keyboard-operable
-- **Tests**: 99 API tests against real Postgres, 5 browser tests (flows, realtime, keyboard and axe), plus one crash-recovery drill checking 6 database invariants
+- **Tests**: 103 API tests against real Postgres, 5 browser tests (flows, realtime, keyboard and axe), plus one crash-recovery drill checking 6 database invariants
 - **Load test**: k6 (target: p95 < 200 ms on `GET /api/board` at 100 concurrent users)
 
 ## Current deployment and evidence
@@ -43,7 +43,7 @@ npm run dev -w @teamform/web   # web on :5173
 ## Tests
 
 ```bash
-npm test              # 99 API tests: rules, authz, validation, idempotency,
+npm test              # 103 API tests: rules, authz, validation, idempotency,
                       # and concurrency proofs (50 racers, 1 seat, exactly 1 winner)
 ```
 

@@ -27174,16 +27174,16 @@ const asInteger = serializer.asInteger.bind(serializer)
     function getSchemaDependencies(refResolver, schemaId) {
       const dependencies = {};
       const processed = /* @__PURE__ */ new Set();
-      const pending = [schemaId];
-      while (pending.length > 0) {
-        const currentSchemaId = pending.pop();
+      const pending2 = [schemaId];
+      while (pending2.length > 0) {
+        const currentSchemaId = pending2.pop();
         if (processed.has(currentSchemaId)) continue;
         processed.add(currentSchemaId);
         for (const ref of refResolver.getSchemaRefs(currentSchemaId)) {
           const dependencySchemaId = ref.schemaId;
           if (dependencySchemaId === currentSchemaId || dependencies[dependencySchemaId] !== void 0) continue;
           dependencies[dependencySchemaId] = refResolver.getSchema(dependencySchemaId);
-          pending.push(dependencySchemaId);
+          pending2.push(dependencySchemaId);
         }
       }
       return dependencies;
@@ -46830,9 +46830,6 @@ var TTL_MS = 1e3;
 var MAX_ENTRIES = 32;
 var cache = /* @__PURE__ */ new Map();
 var generation = 0;
-function boardGeneration() {
-  return generation;
-}
 function cachedBoard(key) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.body;
@@ -46849,6 +46846,26 @@ function storeBoard(key, body, readGen) {
 function invalidateBoard() {
   generation++;
   cache.clear();
+  pending.clear();
+}
+var pending = /* @__PURE__ */ new Map();
+async function readBoard(key, load) {
+  const hit = cachedBoard(key);
+  if (hit) return hit;
+  const existing = pending.get(key);
+  if (existing) return existing;
+  const gen = generation;
+  const task = Promise.resolve().then(load).then((body) => {
+    storeBoard(key, body, gen);
+    return body;
+  });
+  if (pending.size >= MAX_ENTRIES) pending.delete(pending.keys().next().value);
+  pending.set(key, task);
+  try {
+    return await task;
+  } finally {
+    if (pending.get(key) === task) pending.delete(key);
+  }
 }
 
 // src/app.ts
@@ -53385,53 +53402,51 @@ async function boardRoutes(app2) {
     const tc = parseCursor(req.query?.teams_cursor);
     const pc = parseCursor(req.query?.people_cursor);
     const cacheKey = `${limit}|${req.query?.teams_cursor ?? ""}|${req.query?.people_cursor ?? ""}`;
-    const hit = cachedBoard(cacheKey);
-    if (hit) return hit;
-    const readGen = boardGeneration();
-    const teams = pool.query(
-      `WITH page AS (
-         SELECT t.id, t.name, t.wanted_skills, t.created_at, t.leader_id, t.member_count,
-                h.team_size_min, h.team_size_max
-         FROM teams t
-         JOIN hackathons h ON h.id = t.hackathon_id
-         WHERE t.looking_for_members
-           AND t.member_count < h.team_size_max
-           AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2::timestamptz, $3::uuid))
-         ORDER BY t.created_at DESC, t.id DESC
-         LIMIT $1
-       )
-       SELECT page.id, page.name, page.wanted_skills, page.created_at,
-              page.team_size_min, page.team_size_max, page.member_count,
-              (page.member_count >= page.team_size_min) AS is_complete,
-              p.display_name AS leader_name
-       FROM page
-       JOIN profiles p ON p.id = page.leader_id
-       ORDER BY page.created_at DESC, page.id DESC`,
-      [limit, tc?.ts ?? null, tc?.id ?? null]
-    );
-    const people = pool.query(
-      `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
-       FROM profiles p
-       WHERE p.looking_for_team
-         AND NOT EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = p.id)
-         AND ($2::timestamptz IS NULL OR (p.last_active_at, p.id) < ($2::timestamptz, $3::uuid))
-       ORDER BY p.last_active_at DESC, p.id DESC
-       LIMIT $1`,
-      [limit, pc?.ts ?? null, pc?.id ?? null]
-    );
-    const [teamsR, peopleR] = await Promise.all([teams, people]);
-    const lastT = teamsR.rows[teamsR.rows.length - 1];
-    const lastP = peopleR.rows[peopleR.rows.length - 1];
-    const body = {
-      teams: teamsR.rows,
-      // last_active_at is selected for cursor encoding only - never exposed.
-      people: peopleR.rows.map(({ last_active_at, ...rest }) => rest),
-      next_teams_cursor: teamsR.rows.length === limit && lastT ? encCursor(lastT.created_at, lastT.id) : null,
-      next_people_cursor: peopleR.rows.length === limit && lastP ? encCursor(lastP.last_active_at, lastP.id) : null,
-      generated_at: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    storeBoard(cacheKey, body, readGen);
-    return body;
+    return readBoard(cacheKey, async () => {
+      const teams = pool.query(
+        `WITH page AS (
+           SELECT t.id, t.name, t.wanted_skills, t.created_at, t.leader_id, t.member_count,
+                  h.team_size_min, h.team_size_max
+           FROM teams t
+           JOIN hackathons h ON h.id = t.hackathon_id
+           WHERE t.looking_for_members
+             AND t.member_count < h.team_size_max
+             AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2::timestamptz, $3::uuid))
+           ORDER BY t.created_at DESC, t.id DESC
+           LIMIT $1
+         )
+         SELECT page.id, page.name, page.wanted_skills, page.created_at,
+                page.team_size_min, page.team_size_max, page.member_count,
+                (page.member_count >= page.team_size_min) AS is_complete,
+                p.display_name AS leader_name
+         FROM page
+         JOIN profiles p ON p.id = page.leader_id
+         ORDER BY page.created_at DESC, page.id DESC`,
+        [limit, tc?.ts ?? null, tc?.id ?? null]
+      );
+      const people = pool.query(
+        `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
+         FROM profiles p
+         WHERE p.looking_for_team
+           AND NOT EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = p.id)
+           AND ($2::timestamptz IS NULL OR (p.last_active_at, p.id) < ($2::timestamptz, $3::uuid))
+         ORDER BY p.last_active_at DESC, p.id DESC
+         LIMIT $1`,
+        [limit, pc?.ts ?? null, pc?.id ?? null]
+      );
+      const [teamsR, peopleR] = await Promise.all([teams, people]);
+      const lastT = teamsR.rows[teamsR.rows.length - 1];
+      const lastP = peopleR.rows[peopleR.rows.length - 1];
+      const body = {
+        teams: teamsR.rows,
+        // last_active_at is selected for cursor encoding only - never exposed.
+        people: peopleR.rows.map(({ last_active_at, ...rest }) => rest),
+        next_teams_cursor: teamsR.rows.length === limit && lastT ? encCursor(lastT.created_at, lastT.id) : null,
+        next_people_cursor: peopleR.rows.length === limit && lastP ? encCursor(lastP.last_active_at, lastP.id) : null,
+        generated_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      return body;
+    });
   });
   app2.get("/api/health", async () => {
     await pool.query("SELECT 1");

@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, beforeEach } from 'vitest';
 import { app, migrate, resetDb, makeUser, auth, createTeam } from './helpers.js';
 import { pool } from '../src/db.js';
-import { boardCacheSize, invalidateBoard, boardGeneration, storeBoard, BOARD_CACHE_TTL_MS } from '../src/boardcache.js';
+import { boardCacheSize, invalidateBoard, boardGeneration, storeBoard, BOARD_CACHE_TTL_MS, readBoard, boardPendingSize } from '../src/boardcache.js';
 import { signToken } from '../src/auth.js';
 
 // The board cache is a 1s-TTL in-process cache of the PUBLIC board payload.
@@ -139,5 +139,50 @@ describe('invite rotate idempotency', () => {
     expect(r2.json().invite_code).toBe(r1.json().invite_code);
     const { rows } = await pool.query(`SELECT invite_code FROM teams WHERE id = $1`, [team.id]);
     expect(rows[0].invite_code).toBe(r1.json().invite_code); // live code matches the replayed one
+  });
+});
+
+
+describe('board in-flight read sharing', () => {
+  test('concurrent same-key misses execute one loader', async () => {
+    let calls = 0;
+    const load = async () => { calls++; await sleep(20); return { value: 'fresh' }; };
+    const rows = await Promise.all(Array.from({ length: 100 }, () => readBoard('shared', load)));
+    expect(calls).toBe(1);
+    expect(rows.every((r) => r === rows[0])).toBe(true);
+    expect(boardPendingSize()).toBe(0);
+  });
+  test('post-invalidation read never joins old snapshot; old completion cannot remove new task', async () => {
+    let oldDone!: (v: unknown) => void, newDone!: (v: unknown) => void;
+    const oldRead = readBoard('race', () => new Promise((r) => { oldDone = r; }));
+    await sleep(0);
+    invalidateBoard();
+    const newRead = readBoard('race', () => new Promise((r) => { newDone = r; }));
+    await sleep(0);
+    oldDone({ value: 'old' }); await oldRead;
+    expect(boardPendingSize()).toBe(1);
+    let extraCalls = 0;
+    const joined = readBoard('race', async () => { extraCalls++; return {}; });
+    newDone({ value: 'new' });
+    expect(await joined).toEqual({ value: 'new' });
+    await newRead;
+    expect(extraCalls).toBe(0);
+    expect(await readBoard('race', async () => ({}))).toEqual({ value: 'new' });
+  });
+  test('failed loader is removed and a later retry can succeed', async () => {
+    await expect(readBoard('failure', async () => { throw new Error('db failed'); })).rejects.toThrow('db failed');
+    expect(boardPendingSize()).toBe(0);
+    expect(await readBoard('failure', async () => ({ ok: true }))).toEqual({ ok: true });
+  });
+  test('keys remain separate and in-flight bookkeeping is bounded', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const reads = Array.from({ length: 40 }, (_, i) => readBoard('key' + i, async () => { await gate; return { i }; }));
+    expect(boardPendingSize()).toBeLessThanOrEqual(32);
+    release();
+    const rows = await Promise.all(reads);
+    expect((rows[0] as any).i).toBe(0);
+    expect((rows[39] as any).i).toBe(39);
+    expect(boardPendingSize()).toBe(0);
   });
 });

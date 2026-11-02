@@ -11,7 +11,7 @@
  *   (the board is hackathon-wide today; if a hackathon filter is added it
  *   joins the key).
  * - Freshness: same-instance mutations invalidate synchronously AFTER the
- *   response commit (onResponse hook, 2xx only - a rolled-back transaction
+ *   commit, before response bytes (onSend hook, 2xx only - a rolled-back transaction
  *   never invalidates). Cross-instance staleness is bounded by the TTL
  *   (1s), matching the already-disclosed ~1s poll-mode realtime latency.
  *   The bound does NOT depend on any SSE listener being connected.
@@ -50,6 +50,7 @@ export function storeBoard(key: string, body: unknown, readGen: number): void {
 export function invalidateBoard(): void {
   generation++;
   cache.clear();
+  pending.clear();
 }
 
 /** Test/introspection only. */
@@ -58,3 +59,24 @@ export function boardCacheSize(): number {
 }
 
 export const BOARD_CACHE_TTL_MS = TTL_MS;
+
+// Deduplicate only reads of the same key in the same cache generation.
+// Clearing on invalidation keeps later reads from joining an older snapshot.
+const pending = new Map<string, Promise<unknown>>();
+export async function readBoard(key: string, load: () => Promise<unknown>): Promise<unknown> {
+  const hit = cachedBoard(key);
+  if (hit) return hit;
+  const existing = pending.get(key);
+  if (existing) return existing;
+  const gen = generation;
+  const task = Promise.resolve().then(load).then((body) => {
+    storeBoard(key, body, gen);
+    return body;
+  });
+  // Bound in-flight bookkeeping without canceling already-started reads.
+  if (pending.size >= MAX_ENTRIES) pending.delete(pending.keys().next().value as string);
+  pending.set(key, task);
+  try { return await task; }
+  finally { if (pending.get(key) === task) pending.delete(key); }
+}
+export function boardPendingSize(): number { return pending.size; }
