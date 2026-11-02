@@ -53144,6 +53144,7 @@ var respond = (fn) => async (req, reply) => {
 };
 
 // src/routes/teams.ts
+var uuidParam = external_exports.string().uuid();
 var createTeamSchema = external_exports.object({
   name: external_exports.string().trim().min(1).max(80),
   wanted_skills: external_exports.array(external_exports.string().trim().min(1).max(40)).max(20).default([]),
@@ -53201,11 +53202,19 @@ async function teamRoutes(app2) {
       if (count.rows[0].n >= team.team_size_max) throw errors.conflict("team_full", "This team is full");
       await c.query(`INSERT INTO team_members (team_id, hackathon_id, user_id, role) VALUES ($1, $2, $3, 'member')`, [team.id, team.hackathon_id, req.userId]);
       await audit(c, team.hackathon_id, team.id, req.userId, "member_joined", { via: "invite_code" });
+      const cancelled = await c.query(
+        `UPDATE join_requests SET status = 'cancelled', decided_at = now()
+         WHERE user_id = $1 AND hackathon_id = $2 AND status = 'pending' RETURNING id, team_id`,
+        [req.userId, team.hackathon_id]
+      );
+      for (const r of cancelled.rows) {
+        await audit(c, team.hackathon_id, r.team_id, req.userId, "join_request_auto_cancelled", { request_id: r.id, reason: "joined_another_team" });
+      }
       return { status: 201, body: { team_id: team.id } };
     });
   }));
   app2.get("/api/teams/:id", { preHandler: authenticate }, async (req) => {
-    const { id } = req.params;
+    const id = parse(uuidParam, req.params.id);
     const { rows } = await pool.query(
       `SELECT t.*, h.team_size_min, h.team_size_max, h.slug AS hackathon_slug FROM teams t JOIN hackathons h ON h.id = t.hackathon_id WHERE t.id = $1`,
       [id]
@@ -53247,7 +53256,7 @@ async function teamRoutes(app2) {
   app2.post("/api/teams/:id/requests", { preHandler: authenticate }, idempotent("create_join_request", async (req) => {
     await rateLimit(`join_request:${req.userId}`, 10, 60);
     const body = parse(joinRequestSchema, req.body);
-    const teamId = req.params.id;
+    const teamId = parse(uuidParam, req.params.id);
     return withTx(async (c) => {
       const { rows } = await c.query(`SELECT id, hackathon_id FROM teams WHERE id = $1`, [teamId]);
       const team = rows[0];
@@ -53269,6 +53278,7 @@ async function teamRoutes(app2) {
   }));
   app2.post("/api/requests/:id/accept", { preHandler: authenticate }, respond(async (req) => {
     await rateLimit(`moderate:${req.userId}`, 30, 60);
+    parse(uuidParam, req.params.id);
     return withTx(async (c) => {
       const { rows } = await c.query(
         `SELECT jr.*, t.leader_id, h.team_size_max FROM join_requests jr
@@ -53283,22 +53293,33 @@ async function teamRoutes(app2) {
       const member = await c.query(`SELECT 1 FROM team_members WHERE hackathon_id = $1 AND user_id = $2`, [jr.hackathon_id, jr.user_id]);
       if (member.rowCount) {
         await c.query(`UPDATE join_requests SET status = 'cancelled', decided_at = now(), decided_by = $2 WHERE id = $1`, [jr.id, req.userId]);
-        throw errors.conflict("requester_already_in_team", "This person has already joined a team");
+        await audit(c, jr.hackathon_id, jr.team_id, req.userId, "join_request_auto_cancelled", { request_id: jr.id, reason: "requester_already_in_team", user_id: jr.user_id });
+        return { status: 409, body: { error: { code: "requester_already_in_team", message: "This person has already joined a team; their request was cancelled" } } };
       }
       const count = await c.query(`SELECT count(*)::int AS n FROM team_members WHERE team_id = $1`, [jr.team_id]);
       if (count.rows[0].n >= jr.team_size_max) throw errors.conflict("team_full", "This team is full");
       await c.query(`UPDATE join_requests SET status = 'accepted', decided_at = now(), decided_by = $2 WHERE id = $1`, [jr.id, req.userId]);
       await c.query(`INSERT INTO team_members (team_id, hackathon_id, user_id, role) VALUES ($1, $2, $3, 'member')`, [jr.team_id, jr.hackathon_id, jr.user_id]);
-      await c.query(`UPDATE join_requests SET status = 'cancelled', decided_at = now() WHERE user_id = $1 AND hackathon_id = $2 AND status = 'pending'`, [jr.user_id, jr.hackathon_id]);
+      const others = await c.query(
+        `UPDATE join_requests SET status = 'cancelled', decided_at = now()
+         WHERE user_id = $1 AND hackathon_id = $2 AND status = 'pending' RETURNING id, team_id`,
+        [jr.user_id, jr.hackathon_id]
+      );
+      for (const r of others.rows) {
+        await audit(c, jr.hackathon_id, r.team_id, req.userId, "join_request_auto_cancelled", { request_id: r.id, reason: "joined_another_team", user_id: jr.user_id });
+      }
       await audit(c, jr.hackathon_id, jr.team_id, req.userId, "member_joined", { via: "join_request", request_id: jr.id, user_id: jr.user_id });
       return { status: 200, body: { ok: true } };
     });
   }));
   app2.post("/api/requests/:id/decline", { preHandler: authenticate }, respond(async (req) => {
     await rateLimit(`moderate:${req.userId}`, 30, 60);
+    parse(uuidParam, req.params.id);
     return withTx(async (c) => {
       const { rows } = await c.query(
-        `SELECT jr.*, t.leader_id FROM join_requests jr JOIN teams t ON t.id = jr.team_id WHERE jr.id = $1 FOR UPDATE OF jr`,
+        // Lock request AND team rows, matching accept: leadership cannot
+        // change between the authorization read and the decision write.
+        `SELECT jr.*, t.leader_id FROM join_requests jr JOIN teams t ON t.id = jr.team_id WHERE jr.id = $1 FOR UPDATE OF jr, t`,
         [req.params.id]
       );
       const jr = rows[0];
@@ -53312,6 +53333,7 @@ async function teamRoutes(app2) {
   }));
   app2.post("/api/teams/:id/leave", { preHandler: authenticate }, respond(async (req) => {
     await rateLimit(`leave:${req.userId}`, 10, 60);
+    parse(uuidParam, req.params.id);
     return withTx(async (c) => {
       const { rows } = await c.query(`SELECT * FROM teams WHERE id = $1 FOR UPDATE`, [req.params.id]);
       const team = rows[0];
@@ -53337,6 +53359,8 @@ async function teamRoutes(app2) {
   }));
   app2.delete("/api/teams/:id/members/:userId", { preHandler: authenticate }, respond(async (req) => {
     await rateLimit(`moderate:${req.userId}`, 30, 60);
+    parse(uuidParam, req.params.id);
+    parse(uuidParam, req.params.userId);
     return withTx(async (c) => {
       const { rows } = await c.query(`SELECT * FROM teams WHERE id = $1 FOR UPDATE`, [req.params.id]);
       const team = rows[0];
@@ -53350,6 +53374,7 @@ async function teamRoutes(app2) {
     });
   }));
   app2.post("/api/teams/:id/invite/rotate", { preHandler: authenticate }, idempotent("rotate_invite", async (req) => {
+    parse(uuidParam, req.params.id);
     return withTx(async (c) => {
       const { rows } = await c.query(
         `SELECT t.*, h.invite_code_ttl_minutes FROM teams t JOIN hackathons h ON h.id = t.hackathon_id WHERE t.id = $1 FOR UPDATE`,
@@ -53368,6 +53393,7 @@ async function teamRoutes(app2) {
     });
   }));
   app2.get("/api/teams/:id/audit", { preHandler: authenticate }, async (req) => {
+    parse(uuidParam, req.params.id);
     const member = await pool.query(`SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`, [req.params.id, req.userId]);
     if (!member.rowCount) throw errors.forbidden("Only team members can see the audit log");
     const { rows } = await pool.query(
@@ -53397,11 +53423,21 @@ function parseCursor(raw) {
 }
 var encCursor = (ts, id) => Buffer.from(`${new Date(ts).toISOString()}|${id}`).toString("base64url");
 async function boardRoutes(app2) {
+  const querySchema = external_exports.object({
+    limit: external_exports.coerce.number().int().min(1).max(200).default(50),
+    teams_cursor: external_exports.string().max(200).optional(),
+    people_cursor: external_exports.string().max(200).optional(),
+    q: external_exports.string().trim().max(80).optional(),
+    skill: external_exports.string().trim().min(1).max(40).optional(),
+    timezone: external_exports.string().trim().max(60).optional()
+  });
   app2.get("/api/board", { preHandler: authenticate }, async (req) => {
-    const limit = Math.min(Number(req.query.limit ?? 50), 200);
-    const tc = parseCursor(req.query?.teams_cursor);
-    const pc = parseCursor(req.query?.people_cursor);
-    const cacheKey = `${limit}|${req.query?.teams_cursor ?? ""}|${req.query?.people_cursor ?? ""}`;
+    const query = parse(querySchema, req.query ?? {});
+    const limit = query.limit;
+    const tc = parseCursor(query.teams_cursor);
+    const pc = parseCursor(query.people_cursor);
+    const q = query.q ? `%${query.q.replace(/[%_\\]/g, (m) => "\\" + m)}%` : null;
+    const cacheKey = [limit, query.teams_cursor ?? "", query.people_cursor ?? "", q ?? "", query.skill ?? "", query.timezone ?? ""].join("|");
     return readBoard(cacheKey, async () => {
       const teams = pool.query(
         `WITH page AS (
@@ -53411,6 +53447,8 @@ async function boardRoutes(app2) {
            JOIN hackathons h ON h.id = t.hackathon_id
            WHERE t.looking_for_members
              AND t.member_count < h.team_size_max
+             AND ($4::text IS NULL OR t.name ILIKE $4)
+             AND ($5::text IS NULL OR $5 = ANY(t.wanted_skills))
              AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2::timestamptz, $3::uuid))
            ORDER BY t.created_at DESC, t.id DESC
            LIMIT $1
@@ -53422,17 +53460,20 @@ async function boardRoutes(app2) {
          FROM page
          JOIN profiles p ON p.id = page.leader_id
          ORDER BY page.created_at DESC, page.id DESC`,
-        [limit, tc?.ts ?? null, tc?.id ?? null]
+        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null]
       );
       const people = pool.query(
         `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
          FROM profiles p
          WHERE p.looking_for_team
            AND NOT EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = p.id)
+           AND ($4::text IS NULL OR p.display_name ILIKE $4)
+           AND ($5::text IS NULL OR $5 = ANY(p.skills))
+           AND ($6::text IS NULL OR p.timezone = $6)
            AND ($2::timestamptz IS NULL OR (p.last_active_at, p.id) < ($2::timestamptz, $3::uuid))
          ORDER BY p.last_active_at DESC, p.id DESC
          LIMIT $1`,
-        [limit, pc?.ts ?? null, pc?.id ?? null]
+        [limit, pc?.ts ?? null, pc?.id ?? null, q, query.skill ?? null, query.timezone ?? null]
       );
       const [teamsR, peopleR] = await Promise.all([teams, people]);
       const lastT = teamsR.rows[teamsR.rows.length - 1];
