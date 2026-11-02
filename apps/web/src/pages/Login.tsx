@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { useToast } from '../components/Toasts';
-import { FIREBASE_TEST_MODE, authErrorMessage, resendVerification, sendReset, signIn, signUp } from '../firebaseClient';
 
 // Dev login tab only for local builds (VITE_SHOW_DEV_LOGIN=true); production never shows it.
 const SHOW_DEV_LOGIN = import.meta.env.VITE_SHOW_DEV_LOGIN === 'true';
@@ -12,20 +11,11 @@ export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
-  const [mode, setMode] = useState<'login' | 'signup' | 'dev' | 'forgot' | 'check-email'>('login');
+  const [mode, setMode] = useState<'login' | 'signup' | 'dev' | 'forgot'>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
-
-  async function exchange(idToken: string, displayName?: string) {
-    const res = await api('/api/auth/firebase', {
-      method: 'POST',
-      body: { id_token: idToken, ...(displayName ? { display_name: displayName } : {}) },
-    });
-    login(res.token, res.user_id, res.refresh_token);
-    navigate('/profile');
-  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -33,51 +23,28 @@ export default function Login() {
     try {
       if (mode === 'forgot') {
         try {
-          await sendReset(email);
+          await api('/api/auth/forgot-password', { method: 'POST', body: { email } });
           toast('If an account exists for that email, a reset link is on its way.');
           setMode('login');
         } catch (err: any) {
-          toast(authErrorMessage(err), 'error');
+          // No generic "on its way" when the deployment cannot send email.
+          toast(err.code === 'email_not_configured'
+            ? 'Email delivery is not configured on this deployment, so reset links cannot be sent yet.'
+            : err.message, 'error');
         }
         return;
       }
-      if (mode === 'dev') {
-        const res = await api('/api/auth/dev-login', { method: 'POST', body: { display_name: name || 'Dev User' } });
-        login(res.token, res.user_id, res.refresh_token);
-        navigate('/profile');
-        return;
-      }
-      if (mode === 'signup') {
-        if (FIREBASE_TEST_MODE) {
-          await exchange(await signIn(email, password), name || email.split('@')[0]);
-          return;
-        }
-        await signUp(email, password);
-        setMode('check-email');
-        return;
-      }
-      // mode === 'login'
-      try {
-        await exchange(await signIn(email, password));
-      } catch (err: any) {
-        if (err?.code === 'forbidden' || String(err?.message ?? '').includes('email_unverified')) {
-          toast('Your email is not verified yet. Check your inbox, or resend the verification email.', 'error');
-          return;
-        }
-        throw err;
-      }
+      const path = mode === 'dev' ? '/api/auth/dev-login' : `/api/auth/${mode}`;
+      const body = mode === 'dev'
+        ? { display_name: name || 'Dev User' }
+        : mode === 'signup'
+          ? { email, password, display_name: name || email.split('@')[0] }
+          : { email, password };
+      const res = await api(path, { method: 'POST', body });
+      login(res.token, res.user_id, res.refresh_token);
+      navigate('/profile');
     } catch (err: any) {
-      toast(authErrorMessage(err), 'error');
-    } finally { setBusy(false); }
-  }
-
-  async function resend() {
-    setBusy(true);
-    try {
-      await resendVerification(email, password);
-      toast('Verification email sent again. Check your inbox and spam folder.');
-    } catch (err: any) {
-      toast(authErrorMessage(err), 'error');
+      toast(err.message, 'error');
     } finally { setBusy(false); }
   }
 
@@ -94,17 +61,6 @@ export default function Login() {
       <section className="self-center py-2 lg:px-4">
       <p className="eyebrow mb-3">Your hackathon workspace</p><h1 className="mb-3 text-3xl font-bold">Sign in to TeamForm</h1>
       <p className="mb-6 text-sm text-slate-400">Welcome back. Pick up where your team left off.</p>
-      {mode === 'check-email' ? (
-        <div className="card space-y-4" role="status">
-          <h2 className="text-lg font-semibold text-slate-900">Verify your email</h2>
-          <p className="text-sm text-slate-600">We sent a verification link to <span className="font-medium">{email}</span>. Open it, then come back and sign in. Check the spam folder if you do not see it.</p>
-          <button className="btn-primary w-full" onClick={() => setMode('login')}>Back to sign in</button>
-          <button type="button" className="btn-ghost w-full" disabled={busy} onClick={async () => { try { await resend(); } catch { /* password not retained: ask to sign in */ } }}>
-            Resend verification email
-          </button>
-        </div>
-      ) : (
-      <>
       <div className="mb-4 flex gap-2" role="tablist" aria-label="Sign in mode">
         {((SHOW_DEV_LOGIN ? ['login', 'signup', 'dev'] : ['login', 'signup']) as Array<'login' | 'signup' | 'dev'>).map((m) => (
           <button key={m} role="tab" aria-selected={mode === m} onClick={() => setMode(m)}
@@ -155,22 +111,14 @@ export default function Login() {
           </button>
         )}
         {mode === 'login' && (
-          <>
-            <button type="button" className="w-full text-center text-xs text-accent hover:underline"
-              onClick={() => setMode('forgot')}>
-              Forgot your password?
-            </button>
-            <button type="button" className="w-full text-center text-xs text-slate-400 hover:underline" disabled={busy}
-              onClick={resend}>
-              Resend verification email
-            </button>
-          </>
+          <button type="button" className="w-full text-center text-xs text-accent hover:underline"
+            onClick={() => setMode('forgot')}>
+            Forgot your password?
+          </button>
         )}
         {mode === 'dev' && <p className="text-xs text-slate-400">Dev login is for local/demo use when the server enables it.</p>}
       </form>
-      <p className="mt-5 text-xs leading-relaxed text-slate-400">Sign-in is secured by Firebase Authentication. Verification and password-reset emails are delivered by Firebase; they can land in spam.</p>
-      </>
-      )}
+      <p className="mt-5 text-xs leading-relaxed text-slate-400">Demo note: verification and password-reset email delivery is currently disabled. Your account can still be created.</p>
       </section>
     </div>
   );

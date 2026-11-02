@@ -1,4 +1,4 @@
-import { createVerify } from 'node:crypto';
+import { createVerify, createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
 import { errors } from './errors.js';
 
 export interface FirebaseIdentity {
@@ -7,16 +7,20 @@ export interface FirebaseIdentity {
   email_verified?: boolean;
 }
 
+export type FirebaseRedeemResult =
+  | { ok: true; identity: FirebaseIdentity; refreshToken: string }
+  | { ok: false; reason: 'invalid' | 'unavailable' };
+
 // Injectable seams for unit tests. Never set in production code paths.
 let testVerifier: ((idToken: string) => Promise<FirebaseIdentity>) | null = null;
-let testRefresh: ((firebaseRefreshToken: string) => Promise<boolean>) | null = null;
+let testRedeemer: ((refreshToken: string) => Promise<FirebaseRedeemResult>) | null = null;
 
 export function setFirebaseTestHooks(
   verifier: ((idToken: string) => Promise<FirebaseIdentity>) | null,
-  refresh: ((firebaseRefreshToken: string) => Promise<boolean>) | null = null,
+  redeemer: ((refreshToken: string) => Promise<FirebaseRedeemResult>) | null = null,
 ) {
   testVerifier = verifier;
-  testRefresh = refresh;
+  testRedeemer = redeemer;
 }
 
 const prodLike = () => Boolean(process.env.VERCEL) || process.env.NODE_ENV === 'production';
@@ -60,7 +64,6 @@ async function fetchCerts(forceRefresh = false): Promise<Record<string, string>>
   }
   if (!res.ok) throw errors.unavailable('firebase_unavailable', 'Sign-in verification is temporarily unavailable');
   const certs = (await res.json()) as Record<string, string>;
-  // Honour Google's Cache-Control max-age; fall back to one hour.
   const cc = res.headers.get('cache-control') ?? '';
   const m = /max-age=(\d+)/.exec(cc);
   const maxAgeSec = m ? Math.min(Number(m[1]), 24 * 3600) : 3600;
@@ -122,45 +125,91 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<FirebaseId
 }
 
 // ---------------------------------------------------------------------------
-// Revocation enforcement without an Admin SDK: the session family stores the
-// user's Firebase refresh token at exchange time. At each app-token rotation
-// we redeem it for a fresh Firebase ID token. After a Firebase password
-// reset/change (or explicit revocation), Firebase invalidates that refresh
-// token, this call fails, and the caller revokes the whole app session
-// family. Access tokens still live out their short TTL (documented bound).
-// Fail-closed: network/5xx errors also count as "cannot prove validity" and
-// the caller treats them per policy (revoke on hard invalid, retry-safe on
-// outage - see the caller's error distinction).
+// Firebase refresh-token redemption, used for two things:
+//   1. Exchange-time binding: proves the refresh token the client handed us
+//      belongs to the SAME Firebase uid as the verified ID token (we never
+//      store a bearer credential merely because it is valid for someone).
+//   2. Rotation-time revocation: after a Firebase password reset/change,
+//      disable, or explicit revocation, redemption fails and the caller
+//      revokes the whole app session family.
+// The returned id_token is verified with the same strict checks as any
+// other. Firebase does not rotate the refresh token on redemption (the web
+// SDK reuses one per session), but if the response carries a new one we
+// return it so the caller can persist the latest value.
+// 'invalid' = Google says the credential is dead (4xx). 'unavailable' =
+// network/5xx: the caller applies its bounded outage policy, never an
+// unconditional pass.
 // ---------------------------------------------------------------------------
 
-export type FirebaseRefreshCheck =
-  | { ok: true }
-  | { ok: false; reason: 'invalid' | 'unavailable' };
-
-export async function checkFirebaseRefreshToken(firebaseRefreshToken: string): Promise<FirebaseRefreshCheck> {
-  if (testRefresh) {
-    try {
-      return (await testRefresh(firebaseRefreshToken)) ? { ok: true } : { ok: false, reason: 'invalid' };
-    } catch {
-      return { ok: false, reason: 'unavailable' };
-    }
-  }
+export async function redeemFirebaseRefreshToken(refreshToken: string): Promise<FirebaseRedeemResult> {
+  if (testRedeemer) return testRedeemer(refreshToken);
   if (process.env.FIREBASE_TEST_MODE === 'true') {
     if (!testModeAllowed()) throw new Error('FIREBASE_TEST_MODE is forbidden in production');
-    return { ok: true };
+    // Deterministic offline seam: `fb-refresh-<email>` mirrors testIdToken's
+    // `test-<email>` uid so tests can exercise binding and mismatch.
+    const m = /^fb-refresh-(.+)$/.exec(refreshToken);
+    if (!m) return { ok: false, reason: 'invalid' };
+    return { ok: true, identity: { uid: `test-${m[1]}`, email: m[1], email_verified: true }, refreshToken };
   }
   let res: Response;
   try {
     res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${apiKey()}`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(firebaseRefreshToken)}`,
+      body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`,
     });
   } catch {
     return { ok: false, reason: 'unavailable' };
   }
-  if (res.ok) return { ok: true };
-  if (res.status >= 500) return { ok: false, reason: 'unavailable' };
-  // 4xx: TOKEN_EXPIRED / USER_DISABLED / USER_NOT_FOUND / INVALID_REFRESH_TOKEN
-  return { ok: false, reason: 'invalid' };
+  if (!res.ok) {
+    if (res.status >= 500) return { ok: false, reason: 'unavailable' };
+    return { ok: false, reason: 'invalid' }; // TOKEN_EXPIRED / USER_DISABLED / INVALID_REFRESH_TOKEN
+  }
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    return { ok: false, reason: 'unavailable' };
+  }
+  if (typeof data?.id_token !== 'string') return { ok: false, reason: 'unavailable' };
+  // A 200 with a bad id_token means we cannot prove the credential's state:
+  // treat as unavailable (bounded outage policy applies), never as valid.
+  let identity: FirebaseIdentity;
+  try {
+    identity = await verifyFirebaseIdToken(data.id_token);
+  } catch {
+    return { ok: false, reason: 'unavailable' };
+  }
+  const next = typeof data.refresh_token === 'string' && data.refresh_token ? data.refresh_token : refreshToken;
+  return { ok: true, identity, refreshToken: next };
+}
+
+// ---------------------------------------------------------------------------
+// At-rest protection for stored Firebase refresh tokens. They are persistent
+// bearer credentials, so they are never stored in plaintext: AES-256-GCM
+// with a key derived from the deployment's JWT secret (no new secret to
+// manage; rotating JWT_SECRET rotates this too, which also invalidates all
+// app sessions by design). They are never logged, never returned to clients,
+// and nulled when the session family is revoked (see routes/auth.ts).
+// ---------------------------------------------------------------------------
+
+function encKey(): Buffer {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET is not set');
+  return createHmac('sha256', secret).update('teamform-firebase-refresh-token-store').digest();
+}
+
+export function encryptRefreshToken(token: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', encKey(), iv);
+  const ct = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
+  return `${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${ct.toString('base64url')}`;
+}
+
+export function decryptRefreshToken(stored: string): string {
+  const [iv, tag, ct] = stored.split('.');
+  if (!iv || !tag || !ct) throw new Error('corrupt stored firebase credential');
+  const decipher = createDecipheriv('aes-256-gcm', encKey(), Buffer.from(iv, 'base64url'));
+  decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+  return Buffer.concat([decipher.update(Buffer.from(ct, 'base64url')), decipher.final()]).toString('utf8');
 }

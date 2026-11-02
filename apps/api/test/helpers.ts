@@ -52,11 +52,14 @@ export async function createTeam(token: string, name = 'Team A', extra: object =
 export const testIdToken = (email: string, verified = true, uid?: string) =>
   Buffer.from(JSON.stringify({ uid: uid ?? `test-${email.toLowerCase()}`, email: email.toLowerCase(), email_verified: verified })).toString('base64url');
 
+/** Offline Firebase refresh token mirroring testIdToken's uid (`fb-refresh-<email>` -> `test-<email>`). */
+export const testRefreshToken = (email: string) => `fb-refresh-${email.toLowerCase()}`;
+
 /** Exchange an offline Firebase token for an app session, as the web client does. */
 export function firebaseSignup(name = 'User', email?: string, verified = true) {
   const addr = (email ?? `${crypto.randomUUID()}@test.dev`).toLowerCase();
   return app.inject({
     method: 'POST', url: '/api/auth/firebase',
-    payload: { id_token: testIdToken(addr, verified), display_name: name },
+    payload: { id_token: testIdToken(addr, verified), firebase_refresh_token: testRefreshToken(addr), display_name: name },
   });
 }

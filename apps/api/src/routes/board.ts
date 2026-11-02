@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { parse } from '../util.js';
 import { pool } from '../db.js';
 import { authenticate } from '../auth.js';
 import { readBoard } from '../boardcache.js';
@@ -20,11 +22,24 @@ const encCursor = (ts: unknown, id: string) =>
 export default async function boardRoutes(app: FastifyInstance) {
   // The "looking for teammates" board. Single indexed query per side; this is the
   // endpoint the load test targets (p95 < 200 ms at 100 concurrent users).
+  // Server-side search + filters: q matches team names / people names,
+  // skill and timezone filter both sides. Filters are part of the cache key
+  // and stay in effect while the client pages (it resends them).
+  const querySchema = z.object({
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+    teams_cursor: z.string().max(200).optional(),
+    people_cursor: z.string().max(200).optional(),
+    q: z.string().trim().max(80).optional(),
+    skill: z.string().trim().min(1).max(40).optional(),
+    timezone: z.string().trim().max(60).optional(),
+  });
   app.get('/api/board', { preHandler: authenticate }, async (req: any) => {
-    const limit = Math.min(Number(req.query.limit ?? 50), 200);
-    const tc = parseCursor(req.query?.teams_cursor);
-    const pc = parseCursor(req.query?.people_cursor);
-    const cacheKey = `${limit}|${req.query?.teams_cursor ?? ''}|${req.query?.people_cursor ?? ''}`;
+    const query = parse(querySchema, req.query ?? {});
+    const limit = query.limit;
+    const tc = parseCursor(query.teams_cursor);
+    const pc = parseCursor(query.people_cursor);
+    const q = query.q ? `%${query.q.replace(/[%_\\]/g, (m) => '\\' + m)}%` : null;
+    const cacheKey = [limit, query.teams_cursor ?? '', query.people_cursor ?? '', q ?? '', query.skill ?? '', query.timezone ?? ''].join('|');
     return readBoard(cacheKey, async () => {
       const teams = pool.query(
         `WITH page AS (
@@ -34,6 +49,8 @@ export default async function boardRoutes(app: FastifyInstance) {
            JOIN hackathons h ON h.id = t.hackathon_id
            WHERE t.looking_for_members
              AND t.member_count < h.team_size_max
+             AND ($4::text IS NULL OR t.name ILIKE $4)
+             AND ($5::text IS NULL OR $5 = ANY(t.wanted_skills))
              AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2::timestamptz, $3::uuid))
            ORDER BY t.created_at DESC, t.id DESC
            LIMIT $1
@@ -45,17 +62,20 @@ export default async function boardRoutes(app: FastifyInstance) {
          FROM page
          JOIN profiles p ON p.id = page.leader_id
          ORDER BY page.created_at DESC, page.id DESC`,
-        [limit, tc?.ts ?? null, tc?.id ?? null],
+        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null],
       );
       const people = pool.query(
         `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
          FROM profiles p
          WHERE p.looking_for_team
            AND NOT EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = p.id)
+           AND ($4::text IS NULL OR p.display_name ILIKE $4)
+           AND ($5::text IS NULL OR $5 = ANY(p.skills))
+           AND ($6::text IS NULL OR p.timezone = $6)
            AND ($2::timestamptz IS NULL OR (p.last_active_at, p.id) < ($2::timestamptz, $3::uuid))
          ORDER BY p.last_active_at DESC, p.id DESC
          LIMIT $1`,
-        [limit, pc?.ts ?? null, pc?.id ?? null],
+        [limit, pc?.ts ?? null, pc?.id ?? null, q, query.skill ?? null, query.timezone ?? null],
       );
       const [teamsR, peopleR] = await Promise.all([teams, people]);
       const lastT = teamsR.rows[teamsR.rows.length - 1];

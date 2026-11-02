@@ -1,9 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
 // End-to-end: real API (tsx) + real Postgres + production web build (vite preview).
-// The API and web build use the offline Firebase seam (FIREBASE_TEST_MODE /
-// VITE_FIREBASE_TEST_MODE); nothing external is contacted.
 // Serial workers: specs share one database. The API runs with dev-login enabled
+// and a log-only mailer; nothing external is contacted.
 const DB = process.env.E2E_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/teamform_e2e';
 
 export default defineConfig({
@@ -26,8 +25,8 @@ export default defineConfig({
         DATABASE_URL: DB,
         JWT_SECRET: 'e2e-secret',
         ALLOW_DEV_LOGIN: 'true',
-        FIREBASE_TEST_MODE: 'true',
         EVENTS_POLL_MS: '250',
+        MAIL_PROVIDER: 'log',
         APP_ORIGIN: 'http://localhost:3101',
         PORT: '3100',
       },

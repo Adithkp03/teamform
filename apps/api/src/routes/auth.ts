@@ -1,11 +1,19 @@
+import { mailConfigured } from '../mailer.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import bcrypt from 'bcryptjs';
 import { pool } from '../db.js';
 import { rateLimit } from '../ratelimit.js';
-import { authenticate, signToken, issueRefreshToken, rotateRefreshToken, revokeRefreshToken } from '../auth.js';
-import { verifyFirebaseIdToken, checkFirebaseRefreshToken } from '../firebase.js';
+import {
+  authenticate, signToken, issueRefreshToken, rotateRefreshToken,
+  revokeRefreshToken, revokeAllRefreshTokens, issueActionToken, consumeActionToken,
+} from '../auth.js';
+import {
+  verifyFirebaseIdToken, redeemFirebaseRefreshToken, encryptRefreshToken, decryptRefreshToken,
+} from '../firebase.js';
 import { parse } from '../util.js';
 import { errors } from '../errors.js';
+import { sendAuthMail, authMailUrl } from '../mailer.js';
 
 const profileSchema = z.object({
   display_name: z.string().trim().min(1).max(80),
@@ -15,9 +23,13 @@ const profileSchema = z.object({
   looking_for_team: z.boolean().default(true),
 });
 
+const credSchema = z.object({
+  email: z.string().trim().email().max(254),
+  password: z.string().min(8).max(128),
+});
+
 export default async function authRoutes(app: FastifyInstance) {
-  // Local/dev only: mint a JWT for a synthetic user without any identity
-  // provider. Never enabled on Vercel (ALLOW_DEV_LOGIN is not set there).
+  // Local/dev only: mint a JWT for a synthetic user without Supabase.
   if (process.env.ALLOW_DEV_LOGIN === 'true') {
     app.post('/api/auth/dev-login', async (req) => {
       const body = parse(z.object({ user_id: z.string().uuid().optional(), display_name: z.string().min(1).max(80).default('Dev User') }), req.body);
@@ -31,15 +43,53 @@ export default async function authRoutes(app: FastifyInstance) {
     });
   }
 
-  // The one sign-in path: the client authenticates with Firebase (email +
-  // password, verification and reset emails are sent by Firebase) and
-  // exchanges the Firebase ID token here for our short-lived access JWT plus
-  // a refresh-token session family. Verification status is checked from the
-  // verified token server-side, never from client-reported state.
+  app.post('/api/auth/signup', async (req) => {
+    const body = parse(credSchema.extend({ display_name: z.string().trim().min(1).max(80) }), req.body);
+    await rateLimit(`auth:${req.ip}`, 10, 60);
+    const password_hash = await bcrypt.hash(body.password, 10);
+    const id = crypto.randomUUID();
+    try {
+      await pool.query(
+        `INSERT INTO profiles (id, display_name, email, password_hash) VALUES ($1, $2, $3, $4)`,
+        [id, body.display_name, body.email.toLowerCase(), password_hash],
+      );
+    } catch (e: any) {
+      if (e?.code === '23505') throw errors.conflict('email_taken', 'An account with this email already exists');
+      throw e;
+    }
+    const verifyToken = await issueActionToken(id, 'verify');
+    await sendAuthMail(body.email.toLowerCase(), 'verify', authMailUrl('verify', verifyToken));
+    const session = await issueRefreshToken(id);
+    return { token: signToken(id, session.familyId), refresh_token: session.token, user_id: id };
+  });
+
+  app.post('/api/auth/login', async (req) => {
+    const body = parse(credSchema, req.body);
+    await rateLimit(`auth:${req.ip}`, 10, 60);
+    const { rows } = await pool.query(
+      `SELECT id, password_hash FROM profiles WHERE lower(email) = lower($1) AND password_hash IS NOT NULL`,
+      [body.email],
+    );
+    // Same response for unknown email and wrong password: no account enumeration.
+    if (!rows.length || !(await bcrypt.compare(body.password, rows[0].password_hash))) {
+      throw errors.unauthorized();
+    }
+    const session = await issueRefreshToken(rows[0].id);
+    return { token: signToken(rows[0].id, session.familyId), refresh_token: session.token, user_id: rows[0].id };
+  });
+
+  // Firebase sign-in: the client authenticates with Firebase (email +
+  // password; verification and reset emails are sent by Firebase) and
+  // exchanges its Firebase ID token AND refresh token here for our
+  // short-lived access JWT plus a refresh-token session family. The refresh
+  // token is required: it is what makes later Firebase-side revocation
+  // (password reset/change/disable) enforceable at app-token rotation.
+  // Verification status comes from the verified token server-side, never
+  // from client-reported state.
   app.post('/api/auth/firebase', async (req) => {
     const body = parse(z.object({
       id_token: z.string().min(1).max(8192),
-      firebase_refresh_token: z.string().min(1).max(4096).optional(),
+      firebase_refresh_token: z.string().min(1).max(4096),
       display_name: z.string().trim().min(1).max(80).optional(),
     }), req.body);
     await rateLimit(`auth:${req.ip}`, 10, 60);
@@ -48,6 +98,17 @@ export default async function authRoutes(app: FastifyInstance) {
     if (identity.email_verified !== true) {
       throw errors.forbidden('email_unverified: verify your email address before signing in');
     }
+    // Bind before storing: redeem the presented refresh token and require
+    // the redeemed identity's uid to match the ID token's sub. A refresh
+    // token that is merely valid for some OTHER Firebase account is
+    // rejected, so the stored bearer credential provably belongs to this
+    // sign-in. Fail closed on any error.
+    const bound = await redeemFirebaseRefreshToken(body.firebase_refresh_token);
+    if (!bound.ok) {
+      if (bound.reason === 'unavailable') throw errors.unavailable('firebase_unavailable', 'Sign-in verification is temporarily unavailable');
+      throw errors.unauthorized();
+    }
+    if (bound.identity.uid !== identity.uid) throw errors.unauthorized();
     const email = identity.email.toLowerCase();
     const displayName = body.display_name ?? email.split('@')[0].slice(0, 80) ?? 'User';
 
@@ -102,15 +163,14 @@ export default async function authRoutes(app: FastifyInstance) {
     }
 
     const session = await issueRefreshToken(userId);
-    // Store the Firebase refresh token on the session family's first row so
-    // later rotations can prove the Firebase credential is still valid (see
-    // checkFirebaseRefreshToken). Never exposed to clients.
-    if (body.firebase_refresh_token) {
-      await pool.query(
-        `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
-        [body.firebase_refresh_token, session.id],
-      );
-    }
+    // Store the (encrypted) Firebase refresh token on the session family's
+    // first row so later rotations can prove the Firebase credential is
+    // still valid. Server-only: never logged, never returned to clients,
+    // nulled when the family is revoked.
+    await pool.query(
+      `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1, firebase_check_failed_since = NULL WHERE id = $2`,
+      [encryptRefreshToken(bound.refreshToken), session.id],
+    );
     return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId };
   });
 
@@ -122,28 +182,51 @@ export default async function authRoutes(app: FastifyInstance) {
     await rateLimit(`auth:${req.ip}`, 30, 60);
     const { userId, token, familyId } = await rotateRefreshToken(body.refresh_token);
 
-    // Firebase-side revocation: a password reset/change (or explicit
-    // revocation) on the linked Firebase account invalidates the Firebase
-    // refresh token stored on this family, so the redemption below fails at
-    // the next rotation and we revoke the whole app session family - a reset
-    // actually signs out stolen sessions instead of only future logins.
-    // Access tokens live out their short TTL (bounded by the access-token
-    // expiry, documented). One Google call per rotation, not per request.
-    // Fail-open on Google outage (retry-safe), fail-closed on invalid.
+    // Firebase-side revocation enforcement. Every Firebase-exchanged session
+    // family carries the account's (encrypted) Firebase refresh token; each
+    // rotation redeems it. After a Firebase password reset/change/disable
+    // the redemption fails and we revoke the WHOLE family, so a reset signs
+    // out stolen sessions instead of only future logins.
+    // Bounded outage policy: a Google outage must neither lock users out
+    // forever nor extend a possibly-compromised session forever. While the
+    // check is unreachable, rotations proceed for at most
+    // FIREBASE_CHECK_OUTAGE_GRACE_MS (default 24h) from the FIRST failed
+    // check; after that the check turns fail-closed and rotation is refused
+    // (503) until Google answers again. Legacy password-era sessions carry
+    // no Firebase credential and skip this check during the migration
+    // window; they are converted or expire on their own.
     const { rows: fam } = await pool.query(
-      `SELECT firebase_refresh_token FROM auth_refresh_tokens
-       WHERE COALESCE(family_id, id) = $1 AND firebase_refresh_token IS NOT NULL LIMIT 1`,
+      `SELECT id, firebase_refresh_token, firebase_check_failed_since FROM auth_refresh_tokens
+       WHERE COALESCE(family_id, id) = $1 AND firebase_refresh_token IS NOT NULL
+       ORDER BY created_at ASC LIMIT 1`,
       [familyId],
     );
-    const fbRefresh = fam[0]?.firebase_refresh_token;
-    if (fbRefresh) {
-      const check = await checkFirebaseRefreshToken(fbRefresh);
-      if (!check.ok && check.reason === 'invalid') {
+    if (fam.length) {
+      const row = fam[0];
+      const check = await redeemFirebaseRefreshToken(decryptRefreshToken(row.firebase_refresh_token));
+      if (check.ok) {
+        // Persist the latest refresh token (Google may return a new one) and
+        // clear any outage window.
         await pool.query(
-          `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
+          `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1, firebase_check_failed_since = NULL WHERE id = $2`,
+          [encryptRefreshToken(check.refreshToken), row.id],
+        );
+      } else if (check.reason === 'invalid') {
+        await pool.query(
+          `UPDATE auth_refresh_tokens SET revoked_at = now(), firebase_refresh_token = NULL
+           WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
           [familyId],
         );
         throw errors.unauthorized();
+      } else {
+        const graceMs = Number(process.env.FIREBASE_CHECK_OUTAGE_GRACE_MS ?? 24 * 3600 * 1000);
+        const since = row.firebase_check_failed_since ? new Date(row.firebase_check_failed_since).getTime() : null;
+        if (since !== null && Date.now() - since > graceMs) {
+          throw errors.unavailable('firebase_unavailable', 'Sign-in verification is temporarily unavailable');
+        }
+        if (since === null) {
+          await pool.query(`UPDATE auth_refresh_tokens SET firebase_check_failed_since = now() WHERE id = $1`, [row.id]);
+        }
       }
     }
     return { token: signToken(userId, familyId), refresh_token: token, user_id: userId };
@@ -155,6 +238,54 @@ export default async function authRoutes(app: FastifyInstance) {
     const body = parse(z.object({ refresh_token: z.string().min(1).max(128) }), req.body);
     await rateLimit(`auth:${req.ip}`, 30, 60);
     await revokeRefreshToken(body.refresh_token);
+    return { ok: true };
+  });
+
+  // Always the same response whether or not the email exists: no enumeration.
+  app.post('/api/auth/forgot-password', async (req) => {
+    const body = parse(z.object({ email: z.string().trim().email().max(254) }), req.body);
+    await rateLimit(`forgot:${req.ip}`, 5, 60);
+    if (!mailConfigured) throw errors.unavailable('email_not_configured', 'Email delivery is not configured on this deployment');
+    const { rows } = await pool.query(
+      `SELECT id, email FROM profiles WHERE lower(email) = lower($1) AND password_hash IS NOT NULL`,
+      [body.email],
+    );
+    if (rows.length) {
+      const token = await issueActionToken(rows[0].id, 'reset');
+      await sendAuthMail(rows[0].email, 'reset', authMailUrl('reset', token));
+    }
+    return { ok: true };
+  });
+
+  // Reset consumes the token atomically and revokes every refresh session.
+  app.post('/api/auth/reset-password', async (req) => {
+    const body = parse(z.object({ token: z.string().min(1).max(128), password: z.string().min(8).max(128) }), req.body);
+    await rateLimit(`reset:${req.ip}`, 10, 60);
+    const userId = await consumeActionToken(body.token, 'reset');
+    if (!userId) throw errors.unauthorized();
+    const password_hash = await bcrypt.hash(body.password, 10);
+    await pool.query(`UPDATE profiles SET password_hash = $2 WHERE id = $1`, [userId, password_hash]);
+    await revokeAllRefreshTokens(userId);
+    return { ok: true };
+  });
+
+  app.post('/api/auth/verify-email', async (req) => {
+    const body = parse(z.object({ token: z.string().min(1).max(128) }), req.body);
+    await rateLimit(`verify:${req.ip}`, 10, 60);
+    const userId = await consumeActionToken(body.token, 'verify');
+    if (!userId) throw errors.unauthorized();
+    await pool.query(`UPDATE profiles SET email_verified_at = now() WHERE id = $1`, [userId]);
+    return { ok: true };
+  });
+
+  app.post('/api/auth/resend-verification', { preHandler: authenticate }, async (req: any) => {
+    await rateLimit(`verify:${req.userId}`, 3, 60);
+    if (!mailConfigured) throw errors.unavailable('email_not_configured', 'Email delivery is not configured on this deployment');
+    const { rows } = await pool.query(`SELECT email, email_verified_at FROM profiles WHERE id = $1`, [req.userId]);
+    if (!rows[0]?.email) throw errors.conflict('no_email', 'This account has no email address');
+    if (rows[0].email_verified_at) return { ok: true, already_verified: true };
+    const token = await issueActionToken(req.userId, 'verify');
+    await sendAuthMail(rows[0].email, 'verify', authMailUrl('verify', token));
     return { ok: true };
   });
 
