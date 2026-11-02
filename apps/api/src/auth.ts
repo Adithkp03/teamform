@@ -63,6 +63,32 @@ export async function isSessionValid(sid: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+/** Revoke every family of the user (password reset). Family-locked so a
+ *  rotation racing the reset cannot mint a survivor afterwards. */
+export async function revokeAllRefreshTokens(userId: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const fams = await client.query(
+      `SELECT DISTINCT COALESCE(family_id, id) AS fam FROM auth_refresh_tokens WHERE user_id = $1`,
+      [userId],
+    );
+    for (const { fam } of fams.rows) {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [fam]);
+    }
+    await client.query(
+      `UPDATE auth_refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`,
+      [userId],
+    );
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 /** Logout: revoke the presented token's ENTIRE session family - grace-minted
  *  sibling tokens must not survive a logout. The family advisory lock makes
  *  this atomic with rotation: a racing rotation either mints before the lock
@@ -181,4 +207,27 @@ export async function rotateRefreshToken(oldToken: string): Promise<{ userId: st
   } finally {
     client.release();
   }
+}
+
+/** Single-use action token (reset: 30 min, verify: 7 days); hash stored. */
+export async function issueActionToken(userId: string, kind: 'reset' | 'verify'): Promise<string> {
+  const token = randomBytes(24).toString('hex');
+  const ttl = kind === 'reset' ? '30 minutes' : '7 days';
+  await pool.query(
+    `INSERT INTO auth_action_tokens (user_id, kind, token_hash, expires_at)
+     VALUES ($1, $2, $3, now() + $4::interval)`,
+    [userId, kind, hashToken(token), ttl],
+  );
+  return token;
+}
+
+/** Atomically consume an action token; returns the user id or null. */
+export async function consumeActionToken(token: string, kind: 'reset' | 'verify'): Promise<string | null> {
+  const { rows } = await pool.query(
+    `UPDATE auth_action_tokens SET used_at = now()
+     WHERE token_hash = $1 AND kind = $2 AND used_at IS NULL AND expires_at > now()
+     RETURNING user_id`,
+    [hashToken(token), kind],
+  );
+  return rows[0]?.user_id ?? null;
 }
