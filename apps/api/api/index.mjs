@@ -53090,6 +53090,7 @@ var credSchema = external_exports.object({
 });
 async function authRoutes(app2) {
   if (process.env.ALLOW_DEV_LOGIN === "true") {
+    if (prodLike()) throw new Error("ALLOW_DEV_LOGIN is forbidden in production");
     app2.post("/api/auth/dev-login", async (req) => {
       const body = parse(external_exports.object({ user_id: external_exports.string().uuid().optional(), display_name: external_exports.string().min(1).max(80).default("Dev User") }), req.body);
       const id = body.user_id ?? crypto.randomUUID();

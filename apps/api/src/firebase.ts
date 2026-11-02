@@ -23,7 +23,7 @@ export function setFirebaseTestHooks(
   testRedeemer = redeemer;
 }
 
-const prodLike = () => Boolean(process.env.VERCEL) || process.env.NODE_ENV === 'production';
+export const prodLike = () => Boolean(process.env.VERCEL) || process.env.NODE_ENV === 'production';
 
 // Offline seam for local/E2E runs (unsigned base64url JSON tokens). It is
 // hard-refused in any production-like environment - Vercel always sets

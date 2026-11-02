@@ -8,7 +8,7 @@ import {
   authenticate, signToken, verifyToken, issueRefreshToken, rotateRefreshToken,
   revokeRefreshToken, revokeAllRefreshTokens, issueActionToken, consumeActionToken,
 } from '../auth.js';
-import {
+import { prodLike,
   verifyFirebaseIdToken, firebaseTestMode, redeemFirebaseRefreshToken, encryptRefreshToken, decryptRefreshToken,
 } from '../firebase.js';
 import { createHash } from 'node:crypto';
@@ -37,8 +37,12 @@ const credSchema = z.object({
 });
 
 export default async function authRoutes(app: FastifyInstance) {
-  // Local/dev only: mint a JWT for a synthetic user without Supabase.
+  // Local/dev only: mint a JWT for a synthetic user without Firebase.
+  // Hard-refused in any production-like environment (Vercel always sets
+  // VERCEL=1): the deploy fails loudly instead of exposing an
+  // unauthenticated JWT mint for arbitrary user IDs.
   if (process.env.ALLOW_DEV_LOGIN === 'true') {
+    if (prodLike()) throw new Error('ALLOW_DEV_LOGIN is forbidden in production');
     app.post('/api/auth/dev-login', async (req) => {
       const body = parse(z.object({ user_id: z.string().uuid().optional(), display_name: z.string().min(1).max(80).default('Dev User') }), req.body);
       const id = body.user_id ?? crypto.randomUUID();

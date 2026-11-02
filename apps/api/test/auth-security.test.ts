@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import jwt from 'jsonwebtoken';
 import { app, migrate, resetDb, makeUser, auth, idemKey, createTeam } from './helpers.js';
 import { signToken } from '../src/auth.js';
+import { buildApp } from '../src/app.js';
 
 beforeAll(migrate);
 beforeEach(() => resetDb());
@@ -135,5 +136,35 @@ describe('per-user data access', () => {
     expect(asMember.json().pending_requests ?? []).toEqual([]);
     const asLeader = await app.inject({ method: 'GET', url: `/api/teams/${teamId}`, headers: auth(leader.token) });
     expect(asLeader.json().pending_requests.length).toBe(1);
+  });
+});
+
+describe('dev-login production refusal', () => {
+  test('ALLOW_DEV_LOGIN=true fails the build in a production-like env', async () => {
+    const prevDev = process.env.ALLOW_DEV_LOGIN;
+    const prevVercel = process.env.VERCEL;
+    process.env.ALLOW_DEV_LOGIN = 'true';
+    process.env.VERCEL = '1';
+    try {
+      // Route registration is async; the refusal surfaces when the app
+      // boots (serverless cold start / listen), failing the deploy loudly.
+      const fresh = buildApp();
+      await expect(fresh.ready()).rejects.toThrow(/ALLOW_DEV_LOGIN is forbidden in production/);
+    } finally {
+      if (prevDev === undefined) delete process.env.ALLOW_DEV_LOGIN; else process.env.ALLOW_DEV_LOGIN = prevDev;
+      if (prevVercel === undefined) delete process.env.VERCEL; else process.env.VERCEL = prevVercel;
+    }
+  });
+
+  test('outside production it stays opt-in: absent env means no route', async () => {
+    const prevDev = process.env.ALLOW_DEV_LOGIN;
+    delete process.env.ALLOW_DEV_LOGIN;
+    try {
+      const fresh = buildApp();
+      const res = await fresh.inject({ method: 'POST', url: '/api/auth/dev-login', payload: {} });
+      expect(res.statusCode).toBe(404);
+    } finally {
+      if (prevDev !== undefined) process.env.ALLOW_DEV_LOGIN = prevDev;
+    }
   });
 });
