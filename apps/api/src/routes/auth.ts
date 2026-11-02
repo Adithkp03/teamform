@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs';
 import { pool } from '../db.js';
 import { rateLimit } from '../ratelimit.js';
 import {
-  authenticate, signToken, issueRefreshToken, rotateRefreshToken,
+  authenticate, signToken, verifyToken, issueRefreshToken, rotateRefreshToken,
   revokeRefreshToken, revokeAllRefreshTokens, issueActionToken, consumeActionToken,
 } from '../auth.js';
 import {
@@ -139,21 +139,18 @@ export default async function authRoutes(app: FastifyInstance) {
           await client.query('ROLLBACK');
           throw errors.conflict('email_taken', 'This email is already linked to a different sign-in account');
         }
-        // Collision policy for legacy password-era profiles: their email was
-        // never verified, so a verified Firebase sign-in wins the EMAIL
-        // identifier but inherits NOTHING. The legacy profile keeps its id,
-        // teams and history as unreachable data with the email detached and
-        // audited; the new account starts with a fresh empty profile.
+        // Collision policy for legacy password-era profiles: NEVER detach,
+        // never auto-inherit. A legacy profile holding this email blocks
+        // fresh sign-up and must be claimed through /api/auth/firebase/claim
+        // (legacy password or an authenticated legacy session, plus this
+        // verified Firebase identity). Email equality alone confers nothing.
         const { rows: legacy } = await client.query(
-          `SELECT id FROM profiles WHERE lower(email) = lower($1) AND firebase_uid IS NULL FOR UPDATE`,
+          `SELECT id FROM profiles WHERE lower(email) = lower($1) AND firebase_uid IS NULL AND password_hash IS NOT NULL FOR UPDATE`,
           [email],
         );
-        for (const l of legacy) {
-          await client.query('UPDATE profiles SET email = NULL, email_verified_at = NULL WHERE id = $1', [l.id]);
-          await client.query(
-            `INSERT INTO audit_log (actor_id, action, metadata) VALUES ($1, 'legacy_email_detached', $2)`,
-            [l.id, JSON.stringify({ new_firebase_uid: identity.uid })],
-          );
+        if (legacy.length) {
+          await client.query('ROLLBACK');
+          throw errors.conflict('legacy_claim_required', 'An existing TeamForm account uses this email; sign in with your legacy password to migrate it');
         }
         userId = crypto.randomUUID();
         await client.query(
@@ -175,6 +172,116 @@ export default async function authRoutes(app: FastifyInstance) {
     // first row so later rotations can prove the Firebase credential is
     // still valid. Server-only: never logged, never returned to clients,
     // nulled when the family is revoked.
+    await pool.query(
+      `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
+      [encryptRefreshToken(bound.refreshToken), session.id],
+    );
+    return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId };
+  });
+
+  // Claim a legacy password-era profile onto a verified Firebase identity.
+  // Per the ownership gate, email equality and intent alone confer NOTHING:
+  // the caller must prove legacy ownership with the profile's legacy
+  // password OR an existing authenticated legacy session bound to that same
+  // profile, AND present a verified Firebase identity whose UID-bound
+  // refresh token matches. On success the profile keeps its id, teams and
+  // roles, its password is cleared, all prior sessions are revoked, and a
+  // fresh Firebase-backed session family is issued.
+  app.post('/api/auth/firebase/claim', async (req) => {
+    const body = parse(z.object({
+      id_token: z.string().min(1).max(8192),
+      firebase_refresh_token: z.string().min(1).max(4096),
+      legacy_email: z.string().email().max(320).optional(),
+      legacy_password: z.string().min(1).max(200).optional(),
+    }), req.body);
+    await rateLimit(`auth:${req.ip}`, 10, 60);
+    const identity = await verifyFirebaseIdToken(body.id_token);
+    if (!identity.email) throw errors.unauthorized();
+    if (identity.email_verified !== true) {
+      throw errors.forbidden('email_unverified: verify your email address before signing in');
+    }
+    const bound = await redeemFirebaseRefreshToken(body.firebase_refresh_token);
+    if (!bound.ok) {
+      if (bound.reason === 'unavailable') throw errors.unavailable('firebase_unavailable', 'Sign-in verification is temporarily unavailable');
+      throw errors.unauthorized();
+    }
+    if (bound.identity.uid !== identity.uid) throw errors.unauthorized();
+
+    // Legacy-ownership proof: password, or an authenticated legacy session.
+    let viaSessionUserId: string | null = null;
+    if (!body.legacy_password) {
+      const header = req.headers.authorization ?? '';
+      const m = /^Bearer (.+)$/.exec(header);
+      if (!m) throw errors.unauthorized();
+      try {
+        viaSessionUserId = verifyToken(m[1]).userId;
+      } catch {
+        throw errors.unauthorized();
+      }
+    }
+
+    const client = await pool.connect();
+    let userId: string;
+    try {
+      await client.query('BEGIN');
+      let rows;
+      if (body.legacy_password) {
+        if (!body.legacy_email) throw errors.badRequest('legacy_email is required with legacy_password');
+        rows = (await client.query(
+          `SELECT id, password_hash FROM profiles
+           WHERE lower(email) = lower($1) AND firebase_uid IS NULL AND password_hash IS NOT NULL FOR UPDATE`,
+          [body.legacy_email],
+        )).rows;
+        // Same response for unknown email and wrong password: no enumeration.
+        if (!rows.length || !(await bcrypt.compare(body.legacy_password, rows[0].password_hash))) {
+          await client.query('ROLLBACK');
+          throw errors.unauthorized();
+        }
+      } else {
+        rows = (await client.query(
+          `SELECT id, password_hash FROM profiles
+           WHERE id = $1 AND firebase_uid IS NULL AND password_hash IS NOT NULL FOR UPDATE`,
+          [viaSessionUserId],
+        )).rows;
+        if (!rows.length) {
+          await client.query('ROLLBACK');
+          throw errors.unauthorized();
+        }
+      }
+      const legacy = rows[0];
+
+      // The Firebase uid must not already be linked to a DIFFERENT profile.
+      const { rows: linked } = await client.query(
+        `SELECT id FROM profiles WHERE firebase_uid = $1 AND id <> $2 FOR UPDATE`,
+        [identity.uid, legacy.id],
+      );
+      if (linked.length) {
+        await client.query('ROLLBACK');
+        throw errors.conflict('firebase_uid_taken', 'This sign-in account is already linked to a different profile');
+      }
+
+      await client.query(
+        `UPDATE profiles SET firebase_uid = $1, password_hash = NULL,
+           email = lower($2), email_verified_at = COALESCE(email_verified_at, now()), last_active_at = now()
+         WHERE id = $3`,
+        [identity.uid, identity.email, legacy.id],
+      );
+      await client.query(
+        `INSERT INTO audit_log (actor_id, action, metadata) VALUES ($1, 'legacy_profile_claimed', $2)`,
+        [legacy.id, JSON.stringify({ via: body.legacy_password ? 'password' : 'session', firebase_uid: identity.uid })],
+      );
+      await client.query('COMMIT');
+      userId = legacy.id;
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    // All pre-claim sessions die; the account continues Firebase-backed only.
+    await revokeAllRefreshTokens(userId);
+    const session = await issueRefreshToken(userId);
     await pool.query(
       `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
       [encryptRefreshToken(bound.refreshToken), session.id],

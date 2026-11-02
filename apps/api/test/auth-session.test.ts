@@ -358,3 +358,94 @@ test('exchange rejects a firebase refresh token bound to a DIFFERENT uid', async
   });
   expect(missing.statusCode).toBe(400);
 });
+
+// --- Legacy profile claim (ownership gate: legacy password OR legacy session + verified Firebase identity) ---
+
+const legacyUser = async (email: string, password = PW) => {
+  const s = await legacySignup(email, password);
+  expect(s.statusCode).toBe(200);
+  return s.json();
+};
+
+test('claim with legacy password links the profile, keeps teams, clears the password, revokes old sessions', async () => {
+  const email = uniq('claim');
+  const legacy = await legacyUser(email);
+  // legacy user owns a team
+  const team = await createTeam(legacy.token, 'Claim Team');
+  expect(team.statusCode).toBe(201);
+
+  const c = await app.inject({ method: 'POST', url: '/api/auth/firebase/claim', payload: {
+    id_token: testIdToken(email), firebase_refresh_token: testRefreshToken(email),
+    legacy_email: email, legacy_password: PW,
+  } });
+  expect(c.statusCode).toBe(200);
+  expect(c.json().user_id).toBe(legacy.user_id); // SAME profile: teams/roles kept
+
+  // password cleared: legacy login no longer works
+  expect((await login(email)).statusCode).toBe(401);
+  // old sessions revoked
+  expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: legacy.refresh_token } })).statusCode).toBe(401);
+  // new session works and is Firebase-backed (rotation checks the credential)
+  const me = await app.inject({ method: 'GET', url: '/api/me', headers: auth(c.json().token) });
+  expect(me.statusCode).toBe(200);
+  const rot = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: c.json().refresh_token } });
+  expect(rot.statusCode).toBe(200);
+  // and revocation now applies: kill the Firebase credential, next rotation dies
+  setFirebaseTestHooks(null, async () => ({ ok: false, reason: 'invalid' }));
+  expect((await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: rot.json().refresh_token } })).statusCode).toBe(401);
+});
+
+test('claim with an authenticated legacy session (no password) works', async () => {
+  const email = uniq('claim2');
+  const legacy = await legacyUser(email);
+  const c = await app.inject({ method: 'POST', url: '/api/auth/firebase/claim',
+    headers: { authorization: `Bearer ${legacy.token}` },
+    payload: { id_token: testIdToken(email), firebase_refresh_token: testRefreshToken(email) } });
+  expect(c.statusCode).toBe(200);
+  expect(c.json().user_id).toBe(legacy.user_id);
+});
+
+test('claim refuses wrong password, cross-account refresh token, unverified email, double claim', async () => {
+  const email = uniq('claim3');
+  await legacyUser(email);
+  // wrong password
+  expect((await app.inject({ method: 'POST', url: '/api/auth/firebase/claim', payload: {
+    id_token: testIdToken(email), firebase_refresh_token: testRefreshToken(email),
+    legacy_email: email, legacy_password: 'nope-nope',
+  } })).statusCode).toBe(401);
+  // refresh token bound to a different Firebase account
+  expect((await app.inject({ method: 'POST', url: '/api/auth/firebase/claim', payload: {
+    id_token: testIdToken(email), firebase_refresh_token: testRefreshToken(uniq('other')),
+    legacy_email: email, legacy_password: PW,
+  } })).statusCode).toBe(401);
+  // unverified Firebase email
+  expect((await app.inject({ method: 'POST', url: '/api/auth/firebase/claim', payload: {
+    id_token: testIdToken(email, false), firebase_refresh_token: testRefreshToken(email),
+    legacy_email: email, legacy_password: PW,
+  } })).statusCode).toBe(403);
+  // profile untouched by the failures: a correct claim still works
+  const ok = await app.inject({ method: 'POST', url: '/api/auth/firebase/claim', payload: {
+    id_token: testIdToken(email), firebase_refresh_token: testRefreshToken(email),
+    legacy_email: email, legacy_password: PW,
+  } });
+  expect(ok.statusCode).toBe(200);
+  // double claim: no legacy password left, no legacy profile to claim
+  expect((await app.inject({ method: 'POST', url: '/api/auth/firebase/claim', payload: {
+    id_token: testIdToken(email), firebase_refresh_token: testRefreshToken(email),
+    legacy_email: email, legacy_password: PW,
+  } })).statusCode).toBe(401);
+});
+
+test('plain exchange with a legacy-held email asks for claim instead of inheriting or detaching', async () => {
+  const email = uniq('claim4');
+  const legacy = await legacyUser(email);
+  const res = await app.inject({ method: 'POST', url: '/api/auth/firebase', payload: {
+    id_token: testIdToken(email), firebase_refresh_token: testRefreshToken(email),
+  } });
+  expect(res.statusCode).toBe(409);
+  expect(res.body).toContain('legacy_claim_required');
+  // legacy profile untouched: still has its email, password login still works
+  expect((await login(email)).statusCode).toBe(200);
+  const me = await app.inject({ method: 'GET', url: '/api/me', headers: auth(legacy.token) });
+  expect(me.statusCode).toBe(200);
+});
