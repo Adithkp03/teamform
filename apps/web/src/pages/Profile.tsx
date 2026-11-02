@@ -14,6 +14,7 @@ export default function Profile() {
   const [skills, setSkills] = useState('');
   const [looking, setLooking] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const offset = -new Date().getTimezoneOffset();
@@ -42,7 +43,11 @@ export default function Profile() {
       });
       toast('Profile saved');
       navigate('/board');
-    } catch (err: any) { toast(err.message, 'error'); } finally { setBusy(false); }
+    } catch (err: any) {
+      // Inputs stay filled; the error is shown inline and as a toast.
+      setSaveError(err.message);
+      toast(err.message, 'error');
+    } finally { setBusy(false); }
   }
 
   return (
@@ -83,6 +88,10 @@ export default function Profile() {
           )}
         </div>
       )}
+      {saveError && <p role="alert" className="text-sm text-danger">{saveError}</p>}
+
+      <p className="text-xs text-slate-400">Saving takes you to the board, where you can find a team or start your own.</p>
+
       <button className="btn-primary" disabled={busy || !loaded}>Save</button>
     </form>
   );

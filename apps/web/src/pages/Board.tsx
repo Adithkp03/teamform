@@ -19,6 +19,7 @@ export default function Board() {
   const [me, setMe] = useState<any>(null);
   const [code, setCode] = useState('');
   const [joining, setJoining] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [teamName, setTeamName] = useState('');
   const [creating, setCreating] = useState(false);
   const [tab, setTab] = useState<'teams' | 'people'>('teams');
@@ -97,7 +98,7 @@ export default function Board() {
       navigate(`/team/${res.team.id}`);
     } catch (err: any) {
       setCreating(false);
-      toast(err.message, 'error');
+      setFormError(err.message); // team name input is preserved
     }
   }
 
@@ -265,6 +266,7 @@ export default function Board() {
           <label className="label" htmlFor="tname">Team name</label>
           <input id="tname" className="input" value={teamName} onChange={(e) => setTeamName(e.target.value)} required />
           <button className="btn-ghost w-full" disabled={creating}>{creating ? 'Creating...' : 'Create team'}</button>
+          {formError && <p role="alert" className="text-sm text-danger">{formError}</p>}
         </form>
       </aside>
 </div>
