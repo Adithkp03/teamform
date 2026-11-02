@@ -262,14 +262,20 @@ test('firebase password reset/change invalidates app sessions at next rotation',
   expect((await signup(email)).statusCode).toBe(200);
 });
 
-test('google outage on the refresh-token check does not lock out the session', async () => {
+test('google outage on the refresh-token check: 503, no state change, retry works', async () => {
   const email = uniq('outage');
-  const s = await app.inject({ method: 'POST', url: '/api/auth/firebase', payload: { id_token: testIdToken(email), display_name: 'Tester', firebase_refresh_token: `fb-refresh-${email}` } });
+  const s = await app.inject({ method: 'POST', url: '/api/auth/firebase', payload: { id_token: testIdToken(email), display_name: 'Tester', firebase_refresh_token: testRefreshToken(email) } });
   expect(s.statusCode).toBe(200);
-  // 'unavailable' (network/5xx) is retry-safe: rotation proceeds
+  const r1 = s.json().refresh_token;
+  // 'unavailable' (network/5xx): refuse with 503 WITHOUT rotating or
+  // revoking - the same refresh token must still work after Google recovers.
   setFirebaseTestHooks(null, async () => ({ ok: false, reason: 'unavailable' }));
-  const r = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: s.json().refresh_token } });
-  expect(r.statusCode).toBe(200);
+  const blocked = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } });
+  expect(blocked.statusCode).toBe(503);
+  setFirebaseTestHooks(null, null);
+  const retry = await app.inject({ method: 'POST', url: '/api/auth/refresh', payload: { refresh_token: r1 } });
+  expect(retry.statusCode).toBe(200);
+  expect(retry.json().refresh_token).toBeTruthy();
 });
 
 

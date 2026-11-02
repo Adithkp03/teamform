@@ -11,6 +11,14 @@ import {
 import {
   verifyFirebaseIdToken, redeemFirebaseRefreshToken, encryptRefreshToken, decryptRefreshToken,
 } from '../firebase.js';
+import { createHash } from 'node:crypto';
+const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
+
+// Legacy password-era sessions (no Firebase credential) may rotate only
+// until this cutoff; afterwards they must go through the claim flow.
+// Default: 7 days after the Firebase reland. Documented in the walkthrough.
+const LEGACY_SESSION_SUNSET = new Date(process.env.LEGACY_SESSION_SUNSET ?? '2026-11-10T00:00:00Z');
+const legacySessionsExpired = () => Date.now() >= LEGACY_SESSION_SUNSET.getTime();
 import { parse } from '../util.js';
 import { errors } from '../errors.js';
 import { sendAuthMail, authMailUrl } from '../mailer.js';
@@ -168,7 +176,7 @@ export default async function authRoutes(app: FastifyInstance) {
     // still valid. Server-only: never logged, never returned to clients,
     // nulled when the family is revoked.
     await pool.query(
-      `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1, firebase_check_failed_since = NULL WHERE id = $2`,
+      `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
       [encryptRefreshToken(bound.refreshToken), session.id],
     );
     return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId };
@@ -180,55 +188,58 @@ export default async function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/refresh', async (req) => {
     const body = parse(z.object({ refresh_token: z.string().min(1).max(128) }), req.body);
     await rateLimit(`auth:${req.ip}`, 30, 60);
-    const { userId, token, familyId } = await rotateRefreshToken(body.refresh_token);
-
-    // Firebase-side revocation enforcement. Every Firebase-exchanged session
-    // family carries the account's (encrypted) Firebase refresh token; each
-    // rotation redeems it. After a Firebase password reset/change/disable
-    // the redemption fails and we revoke the WHOLE family, so a reset signs
-    // out stolen sessions instead of only future logins.
-    // Bounded outage policy: a Google outage must neither lock users out
-    // forever nor extend a possibly-compromised session forever. While the
-    // check is unreachable, rotations proceed for at most
-    // FIREBASE_CHECK_OUTAGE_GRACE_MS (default 24h) from the FIRST failed
-    // check; after that the check turns fail-closed and rotation is refused
-    // (503) until Google answers again. Legacy password-era sessions carry
-    // no Firebase credential and skip this check during the migration
-    // window; they are converted or expire on their own.
-    const { rows: fam } = await pool.query(
-      `SELECT id, firebase_refresh_token, firebase_check_failed_since FROM auth_refresh_tokens
-       WHERE COALESCE(family_id, id) = $1 AND firebase_refresh_token IS NOT NULL
-       ORDER BY created_at ASC LIMIT 1`,
-      [familyId],
+    // Firebase-side revocation enforcement, checked BEFORE rotating so a
+    // failure leaves the presented token (and family) untouched and the
+    // client can retry. Every Firebase-exchanged session family carries the
+    // account's (encrypted) Firebase refresh token; redeeming it proves the
+    // underlying Firebase credential is still valid.
+    //   - 'invalid' (password reset/change/disable): revoke the WHOLE family
+    //     and 401, so a reset signs out stolen sessions, not just future
+    //     logins.
+    //   - 'unavailable' (Google outage/5xx): 503 and NO state change - no
+    //     rotation, no revocation, the same refresh token stays valid so the
+    //     client's next retry works. We never extend a session whose backing
+    //     credential we cannot verify.
+    // Access tokens live out their TTL regardless (15 minutes - see
+    // signToken). Legacy password-era families carry no Firebase credential;
+    // they rotate unchecked until LEGACY_SESSION_SUNSET, after which they
+    // are refused (the claim flow converts them beforehand).
+    const presented = await pool.query(
+      `SELECT user_id, COALESCE(family_id, id) AS fam FROM auth_refresh_tokens WHERE token_hash = $1 AND revoked_at IS NULL`,
+      [hashToken(body.refresh_token)],
     );
-    if (fam.length) {
-      const row = fam[0];
-      const check = await redeemFirebaseRefreshToken(decryptRefreshToken(row.firebase_refresh_token));
-      if (check.ok) {
-        // Persist the latest refresh token (Google may return a new one) and
-        // clear any outage window.
+    if (presented.rows.length) {
+      const famId = presented.rows[0].fam;
+      const { rows: fam } = await pool.query(
+        `SELECT id, firebase_refresh_token FROM auth_refresh_tokens
+         WHERE COALESCE(family_id, id) = $1 AND firebase_refresh_token IS NOT NULL
+         ORDER BY created_at ASC LIMIT 1`,
+        [famId],
+      );
+      if (fam.length) {
+        const check = await redeemFirebaseRefreshToken(decryptRefreshToken(fam[0].firebase_refresh_token));
+        if (!check.ok) {
+          if (check.reason === 'unavailable') {
+            throw errors.unavailable('firebase_unavailable', 'Sign-in verification is temporarily unavailable');
+          }
+          await pool.query(
+            `UPDATE auth_refresh_tokens SET revoked_at = now(), firebase_refresh_token = NULL
+             WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
+            [famId],
+          );
+          throw errors.unauthorized();
+        }
+        // Persist the latest Firebase refresh token (Google may return a new
+        // one) on the family row.
         await pool.query(
-          `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1, firebase_check_failed_since = NULL WHERE id = $2`,
-          [encryptRefreshToken(check.refreshToken), row.id],
+          `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
+          [encryptRefreshToken(check.refreshToken), fam[0].id],
         );
-      } else if (check.reason === 'invalid') {
-        await pool.query(
-          `UPDATE auth_refresh_tokens SET revoked_at = now(), firebase_refresh_token = NULL
-           WHERE COALESCE(family_id, id) = $1 AND revoked_at IS NULL`,
-          [familyId],
-        );
+      } else if (legacySessionsExpired()) {
         throw errors.unauthorized();
-      } else {
-        const graceMs = Number(process.env.FIREBASE_CHECK_OUTAGE_GRACE_MS ?? 24 * 3600 * 1000);
-        const since = row.firebase_check_failed_since ? new Date(row.firebase_check_failed_since).getTime() : null;
-        if (since !== null && Date.now() - since > graceMs) {
-          throw errors.unavailable('firebase_unavailable', 'Sign-in verification is temporarily unavailable');
-        }
-        if (since === null) {
-          await pool.query(`UPDATE auth_refresh_tokens SET firebase_check_failed_since = now() WHERE id = $1`, [row.id]);
-        }
       }
     }
+    const { userId, token, familyId } = await rotateRefreshToken(body.refresh_token);
     return { token: signToken(userId, familyId), refresh_token: token, user_id: userId };
   });
 
