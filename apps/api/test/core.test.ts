@@ -317,6 +317,16 @@ describe('board, suggestions, metrics', () => {
     expect(s[0].score).toBe(2 * 2 + 0 + 2);
     expect(s.find((x: any) => x.id === far.id).timezone_fit).toBe(0);
     expect(s.find((x: any) => x.id === shared.id).shared_skills).toBe(1);
+    // Grounded reasons: names the actual skills, not just counts
+    const top = s[0];
+    expect(top.complementary_skill_names).toEqual(expect.arrayContaining(['node', 'postgres']));
+    expect(top.reason).toContain('node');
+    expect(top.reason).toContain('same timezone');
+    const sh = s.find((x: any) => x.id === shared.id);
+    expect(sh.shared_skill_names).toEqual(['react']);
+    expect(sh.reason).toContain('shares react');
+    const fz = s.find((x: any) => x.id === far.id);
+    expect(fz.reason).toContain('different timezone');
   });
 
   test('suggestions exclude people already in a team', async () => {

@@ -26,10 +26,24 @@ export default function Suggestions() {
               <span className="badge" aria-label={`score ${s.score}`}>score {s.score}</span>
             </div>
             <p className="text-xs text-slate-400">{s.timezone}</p>
-            <p className="mt-2 flex flex-wrap gap-1">{(s.skills ?? []).map((x: string) => <span key={x} className="badge">{x}</span>)}</p>
-            <dl className="mt-2 grid grid-cols-3 gap-1 text-xs text-slate-400">
-              <div><dt>Complements you</dt><dd>{s.complementary_skills}</dd></div>
-              <div><dt>Shared skills</dt><dd>{s.shared_skills}</dd></div>
+            <p className="mt-1 text-sm text-slate-700">{s.reason}</p>
+            <div className="mt-2 space-y-1">
+              {(s.complementary_skill_names ?? []).length > 0 && (
+                <p className="flex flex-wrap items-center gap-1 text-xs text-slate-400">
+                  <span className="mr-1">Adds:</span>
+                  {s.complementary_skill_names.map((x: string) => <span key={x} className="badge border-accent/50 text-accent">{x}</span>)}
+                </p>
+              )}
+              {(s.shared_skill_names ?? []).length > 0 && (
+                <p className="flex flex-wrap items-center gap-1 text-xs text-slate-400">
+                  <span className="mr-1">Shared:</span>
+                  {s.shared_skill_names.map((x: string) => <span key={x} className="badge">{x}</span>)}
+                </p>
+              )}
+            </div>
+            <dl className="mt-2 grid grid-cols-3 gap-1 text-xs text-slate-400" aria-label="score breakdown">
+              <div><dt>Complements you</dt><dd>{s.complementary_skills} x2</dd></div>
+              <div><dt>Shared skills</dt><dd>{s.shared_skills} x1</dd></div>
               <div><dt>Timezone fit</dt><dd>{s.timezone_fit}</dd></div>
             </dl>
           </li>

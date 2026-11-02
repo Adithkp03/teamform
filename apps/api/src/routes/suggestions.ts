@@ -20,6 +20,8 @@ export default async function suggestionRoutes(app: FastifyInstance) {
          SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at,
            (SELECT count(*)::int FROM (SELECT unnest(p.skills) EXCEPT SELECT unnest(me.skills)) d) AS complementary_skills,
            (SELECT count(*)::int FROM (SELECT unnest(p.skills) INTERSECT SELECT unnest(me.skills)) s) AS shared_skills,
+           (SELECT coalesce(array_agg(x.skill), '{}') FROM (SELECT unnest(p.skills) AS skill EXCEPT SELECT unnest(me.skills)) x) AS complementary_skill_names,
+           (SELECT coalesce(array_agg(y.skill), '{}') FROM (SELECT unnest(p.skills) AS skill INTERSECT SELECT unnest(me.skills)) y) AS shared_skill_names,
            (CASE WHEN p.utc_offset_minutes = me.utc_offset_minutes THEN 2
                  WHEN abs(p.utc_offset_minutes - me.utc_offset_minutes) <= 120 THEN 1
                  ELSE 0 END) AS timezone_fit
@@ -33,9 +35,22 @@ export default async function suggestionRoutes(app: FastifyInstance) {
        LIMIT 20`,
       [req.userId],
     );
+    const shortList = (names: string[]) =>
+      names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} +${names.length - 3} more`;
+    const suggestions = rows.map((r: any) => {
+      const parts: string[] = [];
+      const comp: string[] = r.complementary_skill_names ?? [];
+      const shared: string[] = r.shared_skill_names ?? [];
+      if (comp.length) parts.push(`adds ${shortList(comp)} that you don't have`);
+      if (shared.length) parts.push(`shares ${shortList(shared)} with you`);
+      if (r.timezone_fit === 2) parts.push('same timezone as you');
+      else if (r.timezone_fit === 1) parts.push('timezone within 2 hours of yours');
+      else parts.push('in a different timezone');
+      return { ...r, reason: parts.join('; ') };
+    });
     return {
       scoring: 'score = 2*complementary_skills + 1*shared_skills + timezone_fit (same tz=2, within 2h=1, else 0)',
-      suggestions: rows,
+      suggestions,
     };
   });
 }
