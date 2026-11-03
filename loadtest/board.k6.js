@@ -6,6 +6,8 @@ import http from 'k6/http';
 import { check, fail } from 'k6';
 
 export const options = {
+  // p50 comes out as `med`; p99 requires opting into the extended trend stats.
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
   scenarios: {
     board: {
       executor: 'constant-vus',

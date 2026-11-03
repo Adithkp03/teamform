@@ -80,15 +80,19 @@ jobs:
           node -e '
             const boardRows = (label, file) => {
               const m = require(file).metrics;
+              // k6 summary JSON: p50 is exported as `med`; rate metrics count
+              // the true-valued occurrences in `passes` (the real failures),
+              // `fails` is the complement. p(99) requires summaryTrendStats
+              // in the k6 script options.
               return [
                 ["run", label],
-                ["p50", m.http_req_duration?.["p(50)"] + "ms"],
+                ["p50", m.http_req_duration?.med + "ms"],
                 ["p95", m.http_req_duration?.["p(95)"] + "ms"],
                 ["p99", m.http_req_duration?.["p(99)"] + "ms"],
                 ["avg", m.http_req_duration?.avg + "ms"],
                 ["max", m.http_req_duration?.max + "ms"],
                 ["requests", m.http_reqs?.count],
-                ["failed_requests", m.http_req_failed?.fails ?? Math.round((m.http_req_failed?.value ?? 0) * (m.http_reqs?.count ?? 0))],
+                ["failed_requests", m.http_req_failed?.passes ?? 0],
                 ["failed_req_rate", ((m.http_req_failed?.value ?? 0) * 100).toFixed(3) + "%"],
               ];
             };
@@ -105,10 +109,11 @@ jobs:
               const m = require("./loadtest/ci-k6-mix-summary.json").metrics;
               const board = m["http_req_duration{name:GET /api/board}"] ?? {};
               const rows = [
-                ["read p50", board["p(50)"] + "ms"],
+                ["read p50", board.med + "ms"],
                 ["read p95", board["p(95)"] + "ms"],
                 ["read p99", board["p(99)"] + "ms"],
                 ["requests", m.http_reqs?.count],
+                ["failed_requests", m.http_req_failed?.passes ?? 0],
                 ["failed_req_rate", ((m.http_req_failed?.value ?? 0) * 100).toFixed(3) + "%"],
                 ["checks", m.checks ? m.checks.passes + "/" + (m.checks.passes + m.checks.fails) : "?"],
                 ["full create/join/leave cycles", m.mix_full_cycles?.count],
