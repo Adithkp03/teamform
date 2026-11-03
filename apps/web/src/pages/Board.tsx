@@ -168,21 +168,24 @@ export default function Board() {
       toast('Request sent - the team leader will review it.');
       refresh();
     } catch (err: any) {
+      const code = err?.code;
       setPendingTeams((p) => {
         const next = { ...p };
-        // Mark "sent" only when the server confirms a real pending request
-        // exists: a duplicate create (request_already_pending) or a replay of
-        // an in-flight create. Conflicts like team_full or already_in_team
-        // mean NO request was created, so the card must not show a phantom
-        // "Request pending" state with nothing to cancel.
-        if (err?.code === 'request_in_flight' || err?.code === 'request_already_pending') next[teamId] = 'sent';
+        // "sent" requires a server-confirmed EXISTING pending request:
+        // request_already_pending means the unique one-pending-per-team index
+        // was hit, so a persisted request provably exists (and the refresh
+        // below attaches its real cancel id via my_pending_request_id).
+        // request_in_flight only proves concurrent in-flight work - it may
+        // still fail - and conflicts like team_full/already_in_team mean no
+        // request was created. None of those may show a cancelable pending.
+        if (code === 'request_already_pending') next[teamId] = 'sent';
         else delete next[teamId];
         return next;
       });
-      const code = err?.code;
       if (code === 'team_full') toast('This team just filled up - browse other teams below.', 'error');
-      else if (code === 'already_member' || code === 'member_of_other_team') toast('You are already on a team for this hackathon.', 'error');
-      else if (err?.status === 409) toast('You already have a pending request with this team.', 'error');
+      else if (code === 'already_in_team' || code === 'already_member' || code === 'member_of_other_team') toast('You are already on a team for this hackathon.', 'error');
+      else if (code === 'request_already_pending') toast('You already have a pending request with this team.', 'error');
+      else if (code === 'request_in_flight') toast('Your previous attempt is still being processed - the board will update.', 'error');
       else toast(err.message, 'error');
       refresh();
     }
