@@ -17,7 +17,7 @@ function Nav() {
   return (
     <nav aria-label="Main" className="app-header">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-1 px-4 py-3 sm:gap-2 sm:px-8">
-        <Link to="/board" className="mr-2 flex items-center gap-2.5 text-lg font-bold tracking-tight text-slate-900 sm:mr-6"><span className="brand-mark" aria-hidden="true">T</span>TeamForm</Link>
+        <Link to="/board" className="mr-2 flex items-center gap-2.5 text-lg font-bold tracking-tight text-slate-900 sm:mr-6"><span className="brand-mark" aria-hidden="true">C</span>CrewForge</Link>
         <NavLink to="/board" className={link}>Board</NavLink>
         <NavLink to="/suggestions" className={link}>Suggestions</NavLink>
         <NavLink to="/profile" className={link}>Profile</NavLink>

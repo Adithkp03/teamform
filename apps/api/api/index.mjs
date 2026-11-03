@@ -53298,7 +53298,7 @@ async function authRoutes(app2) {
         );
         if (legacy.length) {
           await client.query("ROLLBACK");
-          throw errors.conflict("legacy_claim_required", "An existing TeamForm account uses this email; sign in with your legacy password to migrate it");
+          throw errors.conflict("legacy_claim_required", "An existing CrewForge account uses this email; sign in with your legacy password to migrate it");
         }
         userId = crypto.randomUUID();
         await client.query(

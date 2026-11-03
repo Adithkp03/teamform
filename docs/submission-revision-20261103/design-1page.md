@@ -1,4 +1,4 @@
-# TeamForm - design and evidence
+# CrewForge - design and evidence
 Adith K P · 3 Nov 2026 · product-hardening revision · public repository
 
 **App:** https://teamform-web.vercel.app · **Repo:** https://github.com/Adithkp03/teamform

@@ -102,7 +102,7 @@ export default function Organizer() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `teamform-audit-${Date.now()}.csv`;
+      a.download = `crewforge-audit-${Date.now()}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err: any) { toast(err.message, 'error'); }

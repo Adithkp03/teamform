@@ -86,7 +86,7 @@ export default function Login() {
             legacy_password: legacyPassword,
           },
         });
-        toast('Your existing TeamForm account and teams are migrated.');
+        toast('Your existing CrewForge account and teams are migrated.');
         login(res.token, res.user_id, res.refresh_token);
         navigate('/profile');
         return;
@@ -110,11 +110,11 @@ export default function Login() {
         await exchange(idToken, refreshToken, name || undefined);
       } catch (err: any) {
         if (err?.code === 'legacy_claim_required' || String(err?.message ?? '').includes('legacy_claim_required')) {
-          // An old password-era TeamForm account holds this email: migrate it
+          // An old password-era CrewForge account holds this email: migrate it
           // by proving legacy ownership. Nothing is inherited automatically.
           setPending({ idToken, refreshToken });
           setMode('claim');
-          toast('This email has an existing TeamForm account - enter its old password to migrate it and keep your teams.');
+          toast('This email has an existing CrewForge account - enter its old password to migrate it and keep your teams.');
           return;
         }
         throw err;
@@ -139,16 +139,16 @@ export default function Login() {
 
   return (
     <div className="auth-layout">
-      <section className="auth-story" aria-label="About TeamForm">
-        <div className="flex items-center gap-2.5 text-lg font-bold"><span className="brand-mark" aria-hidden="true">T</span>TeamForm</div>
+      <section className="auth-story" aria-label="About CrewForge">
+        <div className="flex items-center gap-2.5 text-lg font-bold"><span className="brand-mark" aria-hidden="true">C</span>CrewForge</div>
         <p className="eyebrow mt-10">Build together. Start here.</p>
         <h2 className="mt-4 text-4xl font-bold leading-tight sm:text-5xl">Your next great<br />team starts here.</h2>
         <p className="mt-5 max-w-sm leading-relaxed text-slate-600">Find people with the skills you need. Form a team, share an invite, and get building.</p>
-        <div className="auth-illustration" aria-hidden="true"><div className="auth-orbit" /><span className="auth-person left-[8%] top-2 bg-[#d8e7ff] text-[#244783]">&lt;/&gt;</span><span className="auth-person right-[6%] top-6 bg-[#ffecd9] text-[#91542a]">Ux</span><span className="auth-person bottom-0 left-[24%] bg-[#e2e0fb] text-[#5b479c]">AI</span><span className="auth-center">T</span></div>
+        <div className="auth-illustration" aria-hidden="true"><div className="auth-orbit" /><span className="auth-person left-[8%] top-2 bg-[#d8e7ff] text-[#244783]">&lt;/&gt;</span><span className="auth-person right-[6%] top-6 bg-[#ffecd9] text-[#91542a]">Ux</span><span className="auth-person bottom-0 left-[24%] bg-[#e2e0fb] text-[#5b479c]">AI</span><span className="auth-center">C</span></div>
         <div className="grid gap-3 text-sm text-slate-700"><p><span className="mr-2 text-accent" aria-hidden="true">✓</span>Discover complementary skills</p><p><span className="mr-2 text-accent" aria-hidden="true">✓</span>Leader-approved team requests</p><p><span className="mr-2 text-accent" aria-hidden="true">✓</span>One person. One team. No overbooking.</p></div>
       </section>
       <section className="self-center py-2 lg:px-4">
-      <p className="eyebrow mb-3">Your hackathon workspace</p><h1 className="mb-3 text-3xl font-bold">Sign in to TeamForm</h1>
+      <p className="eyebrow mb-3">Your hackathon workspace</p><h1 className="mb-3 text-3xl font-bold">Sign in to CrewForge</h1>
       <p className="mb-6 text-sm text-slate-400">Welcome back. Pick up where your team left off.</p>
       {mode !== 'claim' && mode !== 'forgot' && (
         <div className="mb-4 flex gap-2" role="tablist" aria-label="Sign in mode">
@@ -176,8 +176,8 @@ export default function Login() {
         {mode === 'claim' && (
           <>
             <p className="text-sm text-slate-300">
-              This email belongs to an existing TeamForm account from before we moved sign-in.
-              Enter its <strong>old TeamForm password</strong> to migrate it - your teams and roles come along.
+              This email belongs to an existing CrewForge account from before we moved sign-in.
+              Enter its <strong>old CrewForge password</strong> to migrate it - your teams and roles come along.
               Without it, nothing is transferred.
             </p>
             <div>
@@ -185,7 +185,7 @@ export default function Login() {
               <input id="email" type="email" className="input" value={email} readOnly />
             </div>
             <div>
-              <label className="label" htmlFor="legacy-password">Old TeamForm password</label>
+              <label className="label" htmlFor="legacy-password">Old CrewForge password</label>
               <input id="legacy-password" type="password" className="input" autoComplete="current-password"
                 value={legacyPassword} onChange={(e) => setLegacyPassword(e.target.value)} required autoFocus />
             </div>

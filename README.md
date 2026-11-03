@@ -1,4 +1,4 @@
-# TeamForm - race-proof team formation at scale
+# CrewForge - race-proof team formation at scale
 
 Hack4Hack Crew Hiring Challenge 2026, PS1. A team-formation
 service for a 10,000-participant hackathon: teams with expiring invite codes,

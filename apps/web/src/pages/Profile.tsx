@@ -102,7 +102,7 @@ export default function Profile() {
               const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
               const a = document.createElement('a');
               a.href = URL.createObjectURL(blob);
-              a.download = 'teamform-my-data.json';
+              a.download = 'crewforge-my-data.json';
               a.click();
               URL.revokeObjectURL(a.href);
               toast('Your data export downloaded');

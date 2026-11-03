@@ -89,13 +89,13 @@ export default function Team() {
         <section className="card space-y-3 border-l-4 border-l-accent" aria-label="Invite members">
           <h2 className="font-semibold">Invite members</h2>
           <ol className="list-decimal space-y-1 pl-5 text-sm text-slate-600">
-            <li>Share this invite code. They open TeamForm, pick <strong>Join with code</strong> on the board, and enter it.</li>
+            <li>Share this invite code. They open CrewForge, pick <strong>Join with code</strong> on the board, and enter it.</li>
             <li>Or they find this team on the board and tap <strong>Request to join</strong> - {is_leader ? 'you accept them below' : 'the leader accepts them here'}.</li>
           </ol>
           <div className="flex flex-wrap items-center gap-3">
             <p className="font-mono text-lg tracking-[0.3em] text-accent" aria-label={`Invite code ${team.invite_code}`}>{team.invite_code}</p>
             <button className="btn-primary" onClick={() => copyText(team.invite_code, 'Invite code copied')}>Copy code</button>
-            <button className="btn-ghost" onClick={() => copyText(`Join my team "${team.name}" on TeamForm: open the app, choose "Join with code" on the board, and enter ${team.invite_code}`, 'Invite message copied - paste it anywhere')}>Copy invite message</button>
+            <button className="btn-ghost" onClick={() => copyText(`Join my team "${team.name}" on CrewForge: open the app, choose "Join with code" on the board, and enter ${team.invite_code}`, 'Invite message copied - paste it anywhere')}>Copy invite message</button>
             {is_leader && <button className="btn-ghost" onClick={() => act(`/api/teams/${id}/invite/rotate`, 'New code generated - the old one stopped working')}>Rotate code</button>}
           </div>
           <p className="text-xs text-slate-400">Expires in ~{expiresIn}h. Only people you share it with can use it.</p>

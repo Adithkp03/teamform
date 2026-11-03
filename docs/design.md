@@ -1,4 +1,4 @@
-# TeamForm - Design (1 page)
+# CrewForge - Design (1 page)
 
 Race-proof team formation for a 10,000-participant hackathon: teams, expiring invite codes, leader accept/decline, a live looking-for-teammates board, explained teammate suggestions, realtime updates, audit log. Stack: Fastify + TypeScript + Postgres (Neon free tier), React + Vite on Vercel Hobby. No paid tier, no card.
 
