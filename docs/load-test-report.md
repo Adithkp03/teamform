@@ -227,6 +227,8 @@ and the published history of these tables across runs is the run-to-run
 variation record (the samples table above already shows hosted spread of
 23-378 ms on comparable code).
 
+First measured sample, run https://github.com/Adithkp03/teamform/actions/runs/41686436569 (commit `8d775d9`): board cold p50/p95/p99 = 54.98/68.78/80.31 ms (105,033 reqs, max 281.74 ms), board warm 56.35/64.44/74.37 ms (104,693 reqs, max 104.01 ms), mixed-read p50/p95/p99 = 67.51/80.80/90.85 ms (169,418/169,418 checks, 16 full cycles); 0 failed requests in all three scenarios. Cold-vs-warm delta is small on the hosted runner; the cold-start max spike seen in run #16 (2,243.7 ms) did not recur here (max 281.74 ms).
+
 Test-environment limits, stated plainly: this is the GitHub-hosted CI stack -
 a shared-vCPU `ubuntu-latest` runner with PostgreSQL 16 in a service container
 and k6 on the same box, seeded to 10,000 users / 2,000 teams. It is an
