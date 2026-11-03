@@ -53965,6 +53965,14 @@ async function teamRoutes(app2) {
       if (!t || !t.looking_for_team) throw errors.notFound("That person is not looking for a team");
       if (t.on_a_team) throw errors.conflict("already_in_team", "That person is already on a team");
       if (t.already_requested) throw errors.conflict("already_requested", "They already asked to join - accept their request instead");
+      const expired = await c.query(
+        `UPDATE team_invitations SET status = 'cancelled', decided_at = now()
+         WHERE team_id = $1 AND user_id = $2 AND status = 'pending' AND expires_at <= now() RETURNING id`,
+        [teamId, body.user_id]
+      );
+      for (const row of expired.rows) {
+        await audit(c, team.hackathon_id, teamId, req.userId, "invitation_auto_cancelled", { invitation_id: row.id, reason: "invitation_expired" });
+      }
       try {
         const r = await c.query(
           `INSERT INTO team_invitations (team_id, hackathon_id, user_id, invited_by) VALUES ($1, $2, $3, $4) RETURNING *`,

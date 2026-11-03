@@ -247,3 +247,28 @@ describe('invitation expiry', () => {
     expect(member.rowCount).toBe(0);
   });
 });
+
+  it('an expired invitation does not block re-inviting the same person', async () => {
+    const leader = await makeUser('Lead');
+    const guest = await makeLookingUser('Guest');
+    const teamId = (await (await createTeam(leader.token, 'Rocket')).json()).team.id as string;
+
+    const first = await invite(leader.token, teamId, guest.id);
+    expect(first.statusCode).toBe(201);
+    const firstId = first.json().invitation.id;
+    await pool.query(`UPDATE team_invitations SET expires_at = now() - interval '1 minute' WHERE id = $1`, [firstId]);
+
+    const second = await invite(leader.token, teamId, guest.id);
+    expect(second.statusCode).toBe(201);
+    const secondId = second.json().invitation.id;
+    expect(secondId).not.toBe(firstId);
+
+    const oldRow = await pool.query(`SELECT status FROM team_invitations WHERE id = $1`, [firstId]);
+    expect(oldRow.rows[0].status).toBe('cancelled');
+    const aud = await pool.query(
+      `SELECT 1 FROM audit_log WHERE action = 'invitation_auto_cancelled' AND metadata->>'reason' = 'invitation_expired' AND metadata->>'invitation_id' = $1`, [firstId]);
+    expect(aud.rowCount).toBe(1);
+
+    const inbox = await app.inject({ method: 'GET', url: '/api/me/invitations', headers: auth(guest.token) });
+    expect(inbox.json().invitations.map((i: any) => i.id)).toEqual([secondId]);
+  });

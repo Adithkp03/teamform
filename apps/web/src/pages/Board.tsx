@@ -45,10 +45,17 @@ export default function Board() {
     return params.toString();
   }, [search, skillFilter, tzFilter, minSeats]);
 
+  // The exact query that produced the currently displayed page: loadMore must
+  // extend THAT result set. Reading live filter state here instead would let a
+  // filter change inside the debounce window append a mismatched page (the
+  // sequence guard only trips once the debounced refresh actually fires).
+  const boardQueryRef = useRef('');
+
   const refresh = useCallback(() => {
     const seq = ++seqRef.current;
-    return api(`/api/board?${queryString()}`, { token })
-      .then((d) => { if (seq === seqRef.current) setBoard(d); })
+    const qs = queryString();
+    return api(`/api/board?${qs}`, { token })
+      .then((d) => { if (seq === seqRef.current) { boardQueryRef.current = qs; setBoard(d); } })
       .catch((e) => { if (seq === seqRef.current) toast(e.message, 'error'); });
   }, [token, queryString]);
 
@@ -109,7 +116,9 @@ export default function Board() {
     const seq = seqRef.current;
     setLoadingMore(true);
     try {
-      const next = await api(`/api/board?${queryString(extra)}`, { token });
+      const base = new URLSearchParams(boardQueryRef.current || queryString());
+      for (const [k, v] of Object.entries(extra)) base.set(k, v);
+      const next = await api(`/api/board?${base}`, { token });
       if (seq !== seqRef.current) return;
       setBoard((prev) => prev && {
         teams: tab === 'teams' ? [...prev.teams, ...next.teams] : prev.teams,
