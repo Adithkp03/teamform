@@ -103,9 +103,14 @@ export default function Board() {
     if (tab === 'teams' && board.next_teams_cursor) extra.teams_cursor = board.next_teams_cursor;
     if (tab === 'people' && board.next_people_cursor) extra.people_cursor = board.next_people_cursor;
     if (!extra.teams_cursor && !extra.people_cursor) return;
+    // Same sequence guard as refresh: if filters change while this page
+    // request is in flight, the refresh owns the board and this stale page
+    // must be discarded instead of appended to the new results.
+    const seq = seqRef.current;
     setLoadingMore(true);
     try {
       const next = await api(`/api/board?${queryString(extra)}`, { token });
+      if (seq !== seqRef.current) return;
       setBoard((prev) => prev && {
         teams: tab === 'teams' ? [...prev.teams, ...next.teams] : prev.teams,
         people: tab === 'people' ? [...prev.people, ...next.people] : prev.people,
@@ -165,7 +170,12 @@ export default function Board() {
     } catch (err: any) {
       setPendingTeams((p) => {
         const next = { ...p };
-        if (err?.code === 'request_in_flight' || err?.status === 409) next[teamId] = 'sent';
+        // Mark "sent" only when the server confirms a real pending request
+        // exists: a duplicate create (request_already_pending) or a replay of
+        // an in-flight create. Conflicts like team_full or already_in_team
+        // mean NO request was created, so the card must not show a phantom
+        // "Request pending" state with nothing to cancel.
+        if (err?.code === 'request_in_flight' || err?.code === 'request_already_pending') next[teamId] = 'sent';
         else delete next[teamId];
         return next;
       });

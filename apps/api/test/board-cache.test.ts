@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, beforeEach } from 'vitest';
-import { app, migrate, resetDb, makeUser, auth, createTeam } from './helpers.js';
+import { app, migrate, resetDb, makeUser, auth, createTeam, idemKey } from './helpers.js';
 import { pool } from '../src/db.js';
 import { boardCacheSize, invalidateBoard, boardGeneration, storeBoard, BOARD_CACHE_TTL_MS, readBoard, boardPendingSize } from '../src/boardcache.js';
 import { signToken } from '../src/auth.js';
@@ -184,5 +184,33 @@ describe('board in-flight read sharing', () => {
     expect((rows[0] as any).i).toBe(0);
     expect((rows[39] as any).i).toBe(39);
     expect(boardPendingSize()).toBe(0);
+  });
+});
+
+describe('board cache per-user isolation', () => {
+  test("a warm cached page never serves one user's pending request id to another user", async () => {
+    const leader = await makeUser('LeadX');
+    const asker = await makeUser('AskX');
+    const other = await makeUser('OtherX');
+    const team = (await createTeam(leader.token, 'LeakCheck', { looking_for_members: true })).json().team;
+    const jr = await app.inject({
+      method: 'POST', url: `/api/teams/${team.id}/requests`,
+      headers: { ...auth(asker.token), 'idempotency-key': idemKey() }, payload: {},
+    });
+    expect(jr.statusCode).toBe(201);
+    const requestId = jr.json().request.id;
+
+    // The asker's board shows their own pending request id (cold read, populates cache)
+    const rb = await board(asker.token);
+    const bRow = rb.json().teams.find((row: any) => row.id === team.id);
+    expect(bRow.my_pending_request_id).toBe(requestId);
+
+    // Another user with the SAME filters gets the warm cached page...
+    const rc = await board(other.token);
+    expect(rc.json().generated_at).toBe(rb.json().generated_at); // proves it was a cache hit
+    // ...but their own (empty) pending state, never the asker's request id
+    const cRow = rc.json().teams.find((row: any) => row.id === team.id);
+    expect(cRow.my_pending_request_id).toBeNull();
+    expect(JSON.stringify(rc.json())).not.toContain(requestId);
   });
 });

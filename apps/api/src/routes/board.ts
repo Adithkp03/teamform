@@ -41,7 +41,11 @@ export default async function boardRoutes(app: FastifyInstance) {
     const pc = parseCursor(query.people_cursor);
     const q = query.q ? `%${query.q.replace(/[%_\\]/g, (m) => '\\' + m)}%` : null;
     const cacheKey = [limit, query.teams_cursor ?? '', query.people_cursor ?? '', q ?? '', query.skill ?? '', query.timezone ?? '', query.min_open_seats ?? ''].join('|');
-    return readBoard(cacheKey, async () => {
+    // The cached payload is public board data only - identical for every
+    // authenticated user, which is what makes cross-user serving safe. The
+    // viewer's own pending-request state is per-user, so it is merged into a
+    // per-request copy AFTER the cache read and never enters the cache.
+    const body: any = await readBoard(cacheKey, async () => {
       const teams = pool.query(
         // The timezone filter applies to TEAMS as well as people (matched on
         // the leader's timezone, the same signal the card's match reason
@@ -51,12 +55,10 @@ export default async function boardRoutes(app: FastifyInstance) {
         `WITH page AS (
            SELECT t.id, t.name, t.wanted_skills, t.created_at, t.leader_id, t.member_count,
                   h.team_size_min, h.team_size_max,
-                  lp.display_name AS leader_name, lp.timezone AS leader_timezone,
-                  jr.id AS my_pending_request_id
+                  lp.display_name AS leader_name, lp.timezone AS leader_timezone
            FROM teams t
            JOIN hackathons h ON h.id = t.hackathon_id
            JOIN profiles lp ON lp.id = t.leader_id
-           LEFT JOIN join_requests jr ON jr.team_id = t.id AND jr.user_id = $8 AND jr.status = 'pending'
            WHERE t.looking_for_members
              AND t.member_count < h.team_size_max
              AND ($4::text IS NULL OR t.name ILIKE $4)
@@ -70,7 +72,7 @@ export default async function boardRoutes(app: FastifyInstance) {
          SELECT page.*, (page.member_count >= page.team_size_min) AS is_complete
          FROM page
          ORDER BY page.created_at DESC, page.id DESC`,
-        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null, query.timezone ?? null, req.userId],
+        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null, query.timezone ?? null],
       );
       const people = pool.query(
         `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
@@ -88,7 +90,7 @@ export default async function boardRoutes(app: FastifyInstance) {
       const [teamsR, peopleR] = await Promise.all([teams, people]);
       const lastT = teamsR.rows[teamsR.rows.length - 1];
       const lastP = peopleR.rows[peopleR.rows.length - 1];
-      const body = {
+      return {
         teams: teamsR.rows,
         // last_active_at is selected for cursor encoding only - never exposed.
         people: peopleR.rows.map(({ last_active_at, ...rest }: any) => rest),
@@ -96,8 +98,19 @@ export default async function boardRoutes(app: FastifyInstance) {
         next_people_cursor: peopleR.rows.length === limit && lastP ? encCursor(lastP.last_active_at, lastP.id) : null,
         generated_at: new Date().toISOString(),
       };
-      return body;
     });
+    // Personal layer: one small indexed lookup for the viewer's pending
+    // requests limited to this page's teams, merged into fresh row objects so
+    // the shared cached payload is never mutated.
+    const teamIds = body.teams.map((row: any) => row.id);
+    const pending = teamIds.length
+      ? await pool.query(
+          `SELECT id, team_id FROM join_requests WHERE user_id = $1 AND status = 'pending' AND team_id = ANY($2::uuid[])`,
+          [req.userId, teamIds],
+        )
+      : { rows: [] as any[] };
+    const pendingByTeam = new Map<string, string>(pending.rows.map((r: any) => [r.team_id, r.id]));
+    return { ...body, teams: body.teams.map((row: any) => ({ ...row, my_pending_request_id: pendingByTeam.get(row.id) ?? null })) };
   });
 
   app.get('/api/health', async () => {

@@ -61,3 +61,30 @@ describe('suggestions: live IANA offsets (DST-safe)', () => {
     expect(await fit(me.token, cand.id)).toBe(2);
   });
 });
+
+describe('suggestion feedback integrity', () => {
+  it('rejects a vote for a candidate the user was never served', async () => {
+    const voter = await makeUser('Voter', ['x']);
+    const ghost = await makeUser('Ghost', ['y']);
+    const res = await app.inject({
+      method: 'POST', url: '/api/suggestions/feedback', headers: auth(voter.token),
+      payload: { candidate_id: ghost.id, useful: true },
+    });
+    expect(res.statusCode).toBe(404);
+    const n = await pool.query(`SELECT count(*)::int AS n FROM suggestion_feedback`);
+    expect(n.rows[0].n).toBe(0);
+  });
+
+  it('accepts and updates a vote for a served candidate', async () => {
+    const voter = await makeUser('Voter2', ['x']);
+    const cand = await makeUser('Cand2', ['y']);
+    await pool.query(`UPDATE profiles SET looking_for_team = true WHERE id = $1`, [cand.id]);
+    const served = await app.inject({ method: 'GET', url: '/api/suggestions', headers: auth(voter.token) });
+    expect(served.json().suggestions.map((s: any) => s.id)).toContain(cand.id);
+    const res = await app.inject({
+      method: 'POST', url: '/api/suggestions/feedback', headers: auth(voter.token),
+      payload: { candidate_id: cand.id, useful: true },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+});

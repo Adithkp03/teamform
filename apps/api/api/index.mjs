@@ -53983,18 +53983,18 @@ async function teamRoutes(app2) {
     const member = await pool.query(`SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`, [teamId, req.userId]);
     if (!member.rowCount) throw errors.forbidden("Only team members can see invitations");
     const { rows } = await pool.query(
-      `SELECT ti.id, ti.user_id, ti.created_at, ti.invited_by, p.display_name, p.skills, p.timezone, ip.display_name AS invited_by_name
+      `SELECT ti.id, ti.user_id, ti.created_at, ti.expires_at, ti.invited_by, p.display_name, p.skills, p.timezone, ip.display_name AS invited_by_name
        FROM team_invitations ti
        JOIN profiles p ON p.id = ti.user_id
        JOIN profiles ip ON ip.id = ti.invited_by
-       WHERE ti.team_id = $1 AND ti.status = 'pending' ORDER BY ti.created_at`,
+       WHERE ti.team_id = $1 AND ti.status = 'pending' AND ti.expires_at > now() ORDER BY ti.created_at`,
       [teamId]
     );
     return { invitations: rows };
   });
   app2.get("/api/me/invitations", { preHandler: authenticate }, async (req) => {
     const { rows } = await pool.query(
-      `SELECT ti.id, ti.team_id, ti.created_at, t.name AS team_name,
+      `SELECT ti.id, ti.team_id, ti.created_at, ti.expires_at, t.name AS team_name,
               (SELECT count(*)::int FROM team_members tm WHERE tm.team_id = t.id) AS member_count,
               h.team_size_max, h.team_size_min,
               ip.display_name AS invited_by_name
@@ -54002,7 +54002,7 @@ async function teamRoutes(app2) {
        JOIN teams t ON t.id = ti.team_id
        JOIN hackathons h ON h.id = ti.hackathon_id
        JOIN profiles ip ON ip.id = ti.invited_by
-       WHERE ti.user_id = $1 AND ti.status = 'pending' ORDER BY ti.created_at`,
+       WHERE ti.user_id = $1 AND ti.status = 'pending' AND ti.expires_at > now() ORDER BY ti.created_at`,
       [req.userId]
     );
     return { invitations: rows };
@@ -54020,6 +54020,11 @@ async function teamRoutes(app2) {
       if (!inv) throw errors.notFound("Invitation not found");
       if (inv.user_id !== req.userId) throw errors.forbidden("Only the invited person can accept");
       if (inv.status !== "pending") throw errors.conflict("invitation_already_decided", `Invitation is already ${inv.status}`);
+      if (inv.expires_at && new Date(inv.expires_at) <= /* @__PURE__ */ new Date()) {
+        await c.query(`UPDATE team_invitations SET status = 'cancelled', decided_at = now(), decided_by = $2 WHERE id = $1`, [inv.id, req.userId]);
+        await audit(c, inv.hackathon_id, inv.team_id, req.userId, "invitation_auto_cancelled", { invitation_id: inv.id, reason: "invitation_expired" });
+        return { status: 409, body: { error: { code: "invitation_expired", message: "This invitation has expired" } } };
+      }
       const member = await c.query(`SELECT 1 FROM team_members WHERE hackathon_id = $1 AND user_id = $2`, [inv.hackathon_id, req.userId]);
       if (member.rowCount) {
         await c.query(`UPDATE team_invitations SET status = 'cancelled', decided_at = now(), decided_by = $2 WHERE id = $1`, [inv.id, req.userId]);
@@ -54137,7 +54142,7 @@ async function boardRoutes(app2) {
     const pc = parseCursor(query.people_cursor);
     const q = query.q ? `%${query.q.replace(/[%_\\]/g, (m) => "\\" + m)}%` : null;
     const cacheKey = [limit, query.teams_cursor ?? "", query.people_cursor ?? "", q ?? "", query.skill ?? "", query.timezone ?? "", query.min_open_seats ?? ""].join("|");
-    return readBoard(cacheKey, async () => {
+    const body = await readBoard(cacheKey, async () => {
       const teams = pool.query(
         // The timezone filter applies to TEAMS as well as people (matched on
         // the leader's timezone, the same signal the card's match reason
@@ -54147,12 +54152,10 @@ async function boardRoutes(app2) {
         `WITH page AS (
            SELECT t.id, t.name, t.wanted_skills, t.created_at, t.leader_id, t.member_count,
                   h.team_size_min, h.team_size_max,
-                  lp.display_name AS leader_name, lp.timezone AS leader_timezone,
-                  jr.id AS my_pending_request_id
+                  lp.display_name AS leader_name, lp.timezone AS leader_timezone
            FROM teams t
            JOIN hackathons h ON h.id = t.hackathon_id
            JOIN profiles lp ON lp.id = t.leader_id
-           LEFT JOIN join_requests jr ON jr.team_id = t.id AND jr.user_id = $8 AND jr.status = 'pending'
            WHERE t.looking_for_members
              AND t.member_count < h.team_size_max
              AND ($4::text IS NULL OR t.name ILIKE $4)
@@ -54166,7 +54169,7 @@ async function boardRoutes(app2) {
          SELECT page.*, (page.member_count >= page.team_size_min) AS is_complete
          FROM page
          ORDER BY page.created_at DESC, page.id DESC`,
-        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null, query.timezone ?? null, req.userId]
+        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null, query.timezone ?? null]
       );
       const people = pool.query(
         `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
@@ -54184,7 +54187,7 @@ async function boardRoutes(app2) {
       const [teamsR, peopleR] = await Promise.all([teams, people]);
       const lastT = teamsR.rows[teamsR.rows.length - 1];
       const lastP = peopleR.rows[peopleR.rows.length - 1];
-      const body = {
+      return {
         teams: teamsR.rows,
         // last_active_at is selected for cursor encoding only - never exposed.
         people: peopleR.rows.map(({ last_active_at, ...rest }) => rest),
@@ -54192,8 +54195,14 @@ async function boardRoutes(app2) {
         next_people_cursor: peopleR.rows.length === limit && lastP ? encCursor(lastP.last_active_at, lastP.id) : null,
         generated_at: (/* @__PURE__ */ new Date()).toISOString()
       };
-      return body;
     });
+    const teamIds = body.teams.map((row) => row.id);
+    const pending2 = teamIds.length ? await pool.query(
+      `SELECT id, team_id FROM join_requests WHERE user_id = $1 AND status = 'pending' AND team_id = ANY($2::uuid[])`,
+      [req.userId, teamIds]
+    ) : { rows: [] };
+    const pendingByTeam = new Map(pending2.rows.map((r) => [r.team_id, r.id]));
+    return { ...body, teams: body.teams.map((row) => ({ ...row, my_pending_request_id: pendingByTeam.get(row.id) ?? null })) };
   });
   app2.get("/api/health", async () => {
     await pool.query("SELECT 1");
@@ -54261,11 +54270,13 @@ async function suggestionRoutes(app2) {
     if (rows.length) {
       const n = rows.length;
       const values = rows.map((_, i) => `($1, $${i + 2}, $${i + 2 + n})`).join(",");
-      pool.query(
-        `INSERT INTO suggestion_impressions (user_id, candidate_id, score) VALUES ${values}`,
-        [req.userId, ...rows.map((r) => r.id), ...rows.map((r) => r.score)]
-      ).catch(() => {
-      });
+      try {
+        await pool.query(
+          `INSERT INTO suggestion_impressions (user_id, candidate_id, score) VALUES ${values}`,
+          [req.userId, ...rows.map((r) => r.id), ...rows.map((r) => r.score)]
+        );
+      } catch {
+      }
       if (Math.random() < 0.02) {
         pool.query(`DELETE FROM suggestion_impressions WHERE created_at < now() - interval '30 days'`).catch(() => {
         });
@@ -54280,6 +54291,11 @@ async function suggestionRoutes(app2) {
   app2.post("/api/suggestions/feedback", { preHandler: authenticate }, async (req) => {
     await rateLimit(`suggest_fb:${req.userId}`, 30, 60);
     const body = parse(external_exports.object({ candidate_id: external_exports.string().uuid(), useful: external_exports.boolean() }), req.body);
+    const served = await pool.query(
+      `SELECT 1 FROM suggestion_impressions WHERE user_id = $1 AND candidate_id = $2 LIMIT 1`,
+      [req.userId, body.candidate_id]
+    );
+    if (!served.rowCount) throw errors.notFound("That person was not served to you as a suggestion");
     await pool.query(
       `INSERT INTO suggestion_feedback (user_id, candidate_id, useful) VALUES ($1, $2, $3)
        ON CONFLICT (user_id, candidate_id) DO UPDATE SET useful = EXCLUDED.useful, updated_at = now()`,

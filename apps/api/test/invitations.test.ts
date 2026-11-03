@@ -201,3 +201,49 @@ describe('requester cancels their own pending request', () => {
     expect(audit.json().audit.map((a: any) => a.action)).toContain('join_request_cancelled');
   });
 });
+
+describe('invitation expiry', () => {
+  beforeEach(() => resetDb());
+
+  it('new invitations carry a 7-day expiry', async () => {
+    const leader = await makeUser('LeadTtl');
+    const guest = await makeLookingUser('GuestTtl');
+    const teamId = (await (await createTeam(leader.token, 'TtlTeam')).json()).team.id as string;
+    const inv = await invite(leader.token, teamId, guest.id);
+    expect(inv.statusCode).toBe(201);
+    const row = await pool.query(`SELECT expires_at, created_at FROM team_invitations WHERE id = $1`, [inv.json().invitation.id]);
+    const deltaMs = new Date(row.rows[0].expires_at).getTime() - new Date(row.rows[0].created_at).getTime();
+    expect(Math.abs(deltaMs - 7 * 24 * 3600 * 1000)).toBeLessThan(5000);
+  });
+
+  it('an expired invitation cannot be accepted: refused, cancelled, audited, hidden', async () => {
+    const leader = await makeUser('LeadExp');
+    const guest = await makeLookingUser('GuestExp');
+    const teamId = (await (await createTeam(leader.token, 'ExpiryTeam')).json()).team.id as string;
+    const inv = await invite(leader.token, teamId, guest.id);
+    expect(inv.statusCode).toBe(201);
+    const invId = inv.json().invitation.id;
+    await pool.query(`UPDATE team_invitations SET expires_at = now() - interval '1 minute' WHERE id = $1`, [invId]);
+
+    // Hidden from the invitee inbox and the team's pending list
+    const inbox = await app.inject({ method: 'GET', url: '/api/me/invitations', headers: auth(guest.token) });
+    expect(inbox.json().invitations).toHaveLength(0);
+    const pending = await app.inject({ method: 'GET', url: `/api/teams/${teamId}/invitations`, headers: auth(leader.token) });
+    expect(pending.json().invitations).toHaveLength(0);
+
+    // Accept is refused; the row is cancelled and the expiry is audited
+    const acc = await app.inject({
+      method: 'POST', url: `/api/invitations/${invId}/accept`,
+      headers: { ...auth(guest.token), 'idempotency-key': idemKey() }, payload: {},
+    });
+    expect(acc.statusCode).toBe(409);
+    expect(acc.json().error.code).toBe('invitation_expired');
+    const row = await pool.query(`SELECT status FROM team_invitations WHERE id = $1`, [invId]);
+    expect(row.rows[0].status).toBe('cancelled');
+    const aud = await pool.query(`SELECT 1 FROM audit_log WHERE action = 'invitation_auto_cancelled' AND metadata->>'reason' = 'invitation_expired'`);
+    expect(aud.rowCount).toBe(1);
+    // And no seat was taken
+    const member = await pool.query(`SELECT 1 FROM team_members WHERE user_id = $1`, [guest.id]);
+    expect(member.rowCount).toBe(0);
+  });
+});

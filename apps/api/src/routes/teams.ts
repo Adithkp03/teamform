@@ -344,11 +344,11 @@ export default async function teamRoutes(app: FastifyInstance) {
     const member = await pool.query(`SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`, [teamId, req.userId]);
     if (!member.rowCount) throw errors.forbidden('Only team members can see invitations');
     const { rows } = await pool.query(
-      `SELECT ti.id, ti.user_id, ti.created_at, ti.invited_by, p.display_name, p.skills, p.timezone, ip.display_name AS invited_by_name
+      `SELECT ti.id, ti.user_id, ti.created_at, ti.expires_at, ti.invited_by, p.display_name, p.skills, p.timezone, ip.display_name AS invited_by_name
        FROM team_invitations ti
        JOIN profiles p ON p.id = ti.user_id
        JOIN profiles ip ON ip.id = ti.invited_by
-       WHERE ti.team_id = $1 AND ti.status = 'pending' ORDER BY ti.created_at`,
+       WHERE ti.team_id = $1 AND ti.status = 'pending' AND ti.expires_at > now() ORDER BY ti.created_at`,
       [teamId],
     );
     return { invitations: rows };
@@ -357,7 +357,7 @@ export default async function teamRoutes(app: FastifyInstance) {
   // The invitee's inbox: pending invitations with enough context to decide.
   app.get('/api/me/invitations', { preHandler: authenticate }, async (req: any) => {
     const { rows } = await pool.query(
-      `SELECT ti.id, ti.team_id, ti.created_at, t.name AS team_name,
+      `SELECT ti.id, ti.team_id, ti.created_at, ti.expires_at, t.name AS team_name,
               (SELECT count(*)::int FROM team_members tm WHERE tm.team_id = t.id) AS member_count,
               h.team_size_max, h.team_size_min,
               ip.display_name AS invited_by_name
@@ -365,7 +365,7 @@ export default async function teamRoutes(app: FastifyInstance) {
        JOIN teams t ON t.id = ti.team_id
        JOIN hackathons h ON h.id = ti.hackathon_id
        JOIN profiles ip ON ip.id = ti.invited_by
-       WHERE ti.user_id = $1 AND ti.status = 'pending' ORDER BY ti.created_at`,
+       WHERE ti.user_id = $1 AND ti.status = 'pending' AND ti.expires_at > now() ORDER BY ti.created_at`,
       [req.userId],
     );
     return { invitations: rows };
@@ -387,6 +387,13 @@ export default async function teamRoutes(app: FastifyInstance) {
       if (!inv) throw errors.notFound('Invitation not found');
       if (inv.user_id !== req.userId) throw errors.forbidden('Only the invited person can accept');
       if (inv.status !== 'pending') throw errors.conflict('invitation_already_decided', `Invitation is already ${inv.status}`);
+      if (inv.expires_at && new Date(inv.expires_at) <= new Date()) {
+        // Expired invitations can never take a seat: cancel + COMMIT (a
+        // thrown conflict would roll the update back), then report 409.
+        await c.query(`UPDATE team_invitations SET status = 'cancelled', decided_at = now(), decided_by = $2 WHERE id = $1`, [inv.id, req.userId]);
+        await audit(c, inv.hackathon_id, inv.team_id, req.userId, 'invitation_auto_cancelled', { invitation_id: inv.id, reason: 'invitation_expired' });
+        return { status: 409, body: { error: { code: 'invitation_expired', message: 'This invitation has expired' } } };
+      }
       const member = await c.query(`SELECT 1 FROM team_members WHERE hackathon_id = $1 AND user_id = $2`, [inv.hackathon_id, req.userId]);
       if (member.rowCount) {
         // Stale invitation: cancel it and COMMIT (a thrown conflict would roll

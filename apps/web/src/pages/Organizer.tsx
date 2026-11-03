@@ -15,6 +15,7 @@ export default function Organizer() {
   const [overview, setOverview] = useState<any>(null);
   const [stuck, setStuck] = useState<any[]>([]);
   const [audit, setAudit] = useState<any[] | null>(null);
+  const [auditCursor, setAuditCursor] = useState<string | number | null>(null);
   const [matching, setMatching] = useState<any>(null);
   const [auditFilter, setAuditFilter] = useState({ action: '', user_id: '', team_id: '' });
   const [settings, setSettings] = useState({ name: '', team_size_min: '', team_size_max: '', invite_code_ttl_minutes: '' });
@@ -70,25 +71,41 @@ export default function Organizer() {
     try {
       const res = await api(`/api/organizer/audit?${params}`, { token });
       setAudit(res.audit);
+      setAuditCursor(res.next_cursor ?? null);
     } catch (err: any) { toast(err.message, 'error'); }
   }
 
-  function exportCsv() {
+  async function loadMoreAudit() {
+    if (!auditCursor) return;
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(auditFilter)) if (v.trim()) params.set(k, v.trim());
+    params.set('cursor', String(auditCursor));
+    try {
+      const res = await api(`/api/organizer/audit?${params}`, { token });
+      setAudit((prev) => [...(prev ?? []), ...res.audit]);
+      setAuditCursor(res.next_cursor ?? null);
+    } catch (err: any) { toast(err.message, 'error'); }
+  }
+
+  async function exportCsv() {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(auditFilter)) if (v.trim()) params.set(k, v.trim());
     // CSV export is a plain GET; open with the bearer token via fetch->blob so
-    // the Authorization header never lands in a URL.
-    api(`/api/organizer/audit/export?${params}`, { token }).then(() => {}).catch(() => {});
-    fetch(`${(import.meta.env.VITE_API_URL as string | undefined) ?? ''}/api/organizer/audit/export?${params}`, {
-      headers: { authorization: `Bearer ${token}` },
-    }).then((r) => r.blob()).then((blob) => {
+    // the Authorization header never lands in a URL. One request only, and the
+    // status is checked before the blob is saved (an error page is not a CSV).
+    try {
+      const r = await fetch(`${(import.meta.env.VITE_API_URL as string | undefined) ?? ''}/api/organizer/audit/export?${params}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`Export failed (${r.status})`);
+      const blob = await r.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `teamform-audit-${Date.now()}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-    }).catch((err) => toast(err.message, 'error'));
+    } catch (err: any) { toast(err.message, 'error'); }
   }
 
   async function resolveStuck(id: string) {
@@ -191,6 +208,9 @@ export default function Organizer() {
             ))}
             {audit.length === 0 && <li className="text-slate-400">No matching entries.</li>}
           </ul>
+        )}
+        {audit && auditCursor && (
+          <button className="btn-ghost" type="button" onClick={loadMoreAudit}>Load more audit rows</button>
         )}
         <p className="text-xs text-slate-400">The trail survives team deletion. Retention: keep for the event + 90 days, export before any manual cleanup (docs/operations.md).</p>
       </section>

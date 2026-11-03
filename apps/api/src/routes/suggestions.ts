@@ -4,6 +4,7 @@ import { pool } from '../db.js';
 import { authenticate } from '../auth.js';
 import { rateLimit } from '../ratelimit.js';
 import { parse } from '../util.js';
+import { errors } from '../errors.js';
 
 /**
  * Teammate suggestions, ranked by an explained score:
@@ -71,15 +72,19 @@ export default async function suggestionRoutes(app: FastifyInstance) {
     // Instrumentation for matching-quality validation (review-driven):
     // record what was served so organizers can measure real outcomes
     // (candidate joins a team, direct usefulness votes) instead of trusting
-    // the heuristic blind. Fire-and-forget: analytics must never break the
-    // endpoint, and never slows the response beyond one batch insert.
+    // the heuristic blind. Awaited (one batch insert) but failure-tolerant:
+    // impressions must be durable before the response because feedback votes
+    // are only accepted for served candidates; analytics still never breaks
+    // the endpoint.
     if (rows.length) {
       const n = rows.length;
       const values = rows.map((_: any, i: number) => `($1, $${i + 2}, $${i + 2 + n})`).join(',');
-      pool.query(
-        `INSERT INTO suggestion_impressions (user_id, candidate_id, score) VALUES ${values}`,
-        [req.userId, ...rows.map((r: any) => r.id), ...rows.map((r: any) => r.score)],
-      ).catch(() => {});
+      try {
+        await pool.query(
+          `INSERT INTO suggestion_impressions (user_id, candidate_id, score) VALUES ${values}`,
+          [req.userId, ...rows.map((r: any) => r.id), ...rows.map((r: any) => r.score)],
+        );
+      } catch {}
       // Bounded storage on the free DB: impressions are a rolling 30-day
       // window, pruned probabilistically (~2% of serves) so the table cannot
       // grow without limit. Feedback votes are keyed per (user, candidate)
@@ -100,6 +105,14 @@ export default async function suggestionRoutes(app: FastifyInstance) {
   app.post('/api/suggestions/feedback', { preHandler: authenticate }, async (req: any) => {
     await rateLimit(`suggest_fb:${req.userId}`, 30, 60);
     const body = parse(z.object({ candidate_id: z.string().uuid(), useful: z.boolean() }), req.body);
+    // Feedback is only meaningful for a candidate this user was actually
+    // served; otherwise votes can be fabricated for arbitrary profiles and
+    // pollute the matching-quality metrics.
+    const served = await pool.query(
+      `SELECT 1 FROM suggestion_impressions WHERE user_id = $1 AND candidate_id = $2 LIMIT 1`,
+      [req.userId, body.candidate_id],
+    );
+    if (!served.rowCount) throw errors.notFound('That person was not served to you as a suggestion');
     await pool.query(
       `INSERT INTO suggestion_feedback (user_id, candidate_id, useful) VALUES ($1, $2, $3)
        ON CONFLICT (user_id, candidate_id) DO UPDATE SET useful = EXCLUDED.useful, updated_at = now()`,
