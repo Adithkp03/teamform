@@ -77,10 +77,10 @@ test('205 identical-timestamp teams and people paginate uniquely to exact exhaus
     let pages = 0;
     do {
       const param = side === 'teams' ? 'teams_cursor' : 'people_cursor';
-      const url = `/api/board?limit=24${cursor ? `&${param}=${encodeURIComponent(cursor)}` : ''}`;
-      const res = await app.inject({ method: 'GET', url, headers: auth(viewer.token) });
+      const url: string = `/api/board?limit=24${cursor ? `&${param}=${encodeURIComponent(cursor)}` : ''}`;
+      const res: any = await app.inject({ method: 'GET', url, headers: auth(viewer.token) });
       expect(res.statusCode).toBe(200);
-      const body = res.json();
+      const body: any = res.json();
       seen.push(...body[side].map((r: any) => r.id));
       cursor = side === 'teams' ? body.next_teams_cursor : body.next_people_cursor;
       pages++;
