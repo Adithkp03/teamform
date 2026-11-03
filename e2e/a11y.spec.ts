@@ -44,7 +44,10 @@ test('mobile 390px: accessibility semantics (not a screen-reader run)', async ({
 
   await signup(page, 'Mobile SR User');
   await page.goto('/board');
-  await page.waitForLoadState('networkidle');
+  // The board holds an open SSE stream, so networkidle never settles here;
+  // wait on the primary control instead (the earlier CI failure was exactly
+  // this - retained as evidence of why).
+  await expect(page.getByRole('button', { name: 'Create team' })).toBeVisible();
 
   // Primary actions remain present and named at phone width.
   await expect(page.getByLabel('Team name')).toBeVisible();
