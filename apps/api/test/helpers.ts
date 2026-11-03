@@ -7,6 +7,10 @@ import { signToken } from '../src/auth.js';
 import { buildApp } from '../src/app.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
+// Disable probabilistic self-pruning in tests: a 1-2% background prune racing
+// an intentionally stale fixture row is a rare CI flake (hit on d9ea15e).
+process.env.SELF_PRUNE_PROB = '0';
+
 export const app = buildApp();
 
 export function migrate() {

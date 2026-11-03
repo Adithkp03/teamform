@@ -50,7 +50,7 @@ export function idempotent(
     }
     // Bounded storage on the free DB: probabilistic self-prune (~2% of keyed
     // calls); see pruneIdempotencyKeys for the 24h replay guarantee.
-    if (Math.random() < 0.02) pruneIdempotencyKeys().catch(() => {});
+    if (Math.random() < Number(process.env.SELF_PRUNE_PROB ?? 0.02)) pruneIdempotencyKeys().catch(() => {});
     const userId = req.userId as string;
     const paramsHash = hash({ endpoint, body: req.body });
 
