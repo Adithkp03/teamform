@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { errors } from './errors.js';
 
-export function parse<T>(schema: z.ZodType<T>, data: unknown): T {
+export function parse<S extends z.ZodTypeAny>(schema: S, data: unknown): z.output<S> {
   const result = schema.safeParse(data);
   if (!result.success) {
     const issue = result.error.issues[0];
