@@ -120,3 +120,24 @@ test('legacy millisecond-ISO cursors are accepted (no 500) and malformed cursors
   expect(malformed.statusCode).toBe(200);
   expect(malformed.json().teams.length).toBe(2); // treated as no cursor
 });
+
+test('a page landing exactly on the set boundary emits no dangling cursor', async () => {
+  // 48 teams = exactly two pages of 24: page 2 must come back with a null
+  // cursor (one-row lookahead), or the client shows a Load-more that pages
+  // an empty set.
+  const viewer = await makeUser('Viewer');
+  const { rows: [h] } = await pool.query(`SELECT id FROM hackathons LIMIT 1`);
+  const { rows: [leader] } = await pool.query(
+    `INSERT INTO profiles (id, display_name, looking_for_team) VALUES (gen_random_uuid(), 'BoundaryLeader', false) RETURNING id`);
+  await pool.query(
+    `INSERT INTO teams (hackathon_id, name, leader_id, invite_code, invite_expires_at, member_count)
+     SELECT $1, 'BoundaryTeam ' || g, $2, 'BT' || g, now() + interval '7 days', 1 FROM generate_series(1, 48) g`,
+    [h.id, leader.id]);
+  invalidateBoard();
+  const p1 = await app.inject({ method: 'GET', url: '/api/board?limit=24', headers: auth(viewer.token) });
+  expect(p1.json().teams.length).toBe(24);
+  expect(p1.json().next_teams_cursor).toBeTruthy();
+  const p2 = await app.inject({ method: 'GET', url: `/api/board?limit=24&teams_cursor=${encodeURIComponent(p1.json().next_teams_cursor)}`, headers: auth(viewer.token) });
+  expect(p2.json().teams.length).toBe(24);
+  expect(p2.json().next_teams_cursor).toBeNull(); // no dangling cursor at exact exhaustion
+});

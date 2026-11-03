@@ -26,9 +26,11 @@ const simRefresh = (target: number, avail: number) => {
     const limit = Math.min(200, Math.max(24, target - len));
     const rows = Math.min(limit, avail - len);
     len += rows;
-    more = rows === limit && rows > 0;
     if (len >= target || rows < limit) break;
   }
+  // One-row lookahead server: a cursor survives iff rows exist beyond what
+  // the refresh actually loaded.
+  more = avail > len;
   return { len, more };
 };
 
@@ -38,18 +40,26 @@ const exhaust = async (page: Page, from: { len: number; more: boolean }, final: 
   let len = from.len;
   let more = from.more;
   while (more) {
-    await page.getByRole('button', { name: 'Load more teams' }).click();
+    // A racing refresh cycle may already have loaded the remainder, removing
+    // the button before this click; that convergence is the healthy path.
+    const btn = page.getByRole('button', { name: 'Load more teams' });
+    if ((await btn.count()) === 0) break;
+    await btn.click();
     len = Math.min(len + 24, final);
     more = len < final;
-    await expect(badge(page, len, more)).toBeVisible();
+    await expect.poll(() => badgeCount(page), { timeout: 15000 }).toBeGreaterThanOrEqual(len);
   }
-  await expect(badge(page, final, false)).toBeVisible();
+  await expect(badge(page, final, false)).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole('button', { name: 'Load more teams' })).toHaveCount(0);
 };
 
 const visibleTeamCount = async (client: pg.Client) => {
   const { rows: [cnt] } = await client.query(
+    // Must match the API's board query exactly, including the leader JOIN:
+    // a team whose leader profile is gone is invisible on the board, and
+    // counting it here would make the badge-anchored waits hang forever.
     `SELECT count(*)::int AS n FROM teams t JOIN hackathons h ON h.id = t.hackathon_id
+     JOIN profiles lp ON lp.id = t.leader_id
      WHERE t.looking_for_members AND t.member_count < h.team_size_max`);
   return cnt.n as number;
 };
@@ -63,6 +73,17 @@ const expectVisibleTeams = async (page: Page, n: number) => {
   expect(new Set(hrefs).size).toBe(n);
 };
 
+// The displayed team count, parsed from the badge (N) / (N+). Monotonic
+// threshold waits: one click owes at least one page, but a racing refresh or
+// the demand pump may legitimately deliver MORE than one page between
+// assertions - asserting an exact intermediate count flakes on healthy
+// over-delivery, especially on slower CI.
+const badgeCount = async (page: Page) => {
+  const txt = await page.getByRole('tab', { name: /^Teams looking \(\d+\+?\)$/ }).textContent();
+  const m = txt?.match(/\((\d+)\+?\)/);
+  return m ? Number(m[1]) : -1;
+};
+
 const loadAllPages = async (page: Page, total: number) => {
   await expect(badge(page, 24, true)).toBeVisible();
   for (let loaded = 24; loaded < total; loaded += 24) {
@@ -70,10 +91,10 @@ const loadAllPages = async (page: Page, total: number) => {
     // Exactly one click per page: a click racing a live refresh queues its
     // demand and the board advances once the refresh settles - no retries.
     await page.getByRole('button', { name: 'Load more teams' }).click();
-    await expect(badge(page, want, want < total)).toBeVisible();
+    await expect.poll(() => badgeCount(page), { timeout: 15000 }).toBeGreaterThanOrEqual(want);
   }
   await expect(page.getByRole('button', { name: 'Load more teams' })).toHaveCount(0);
-  await expect(badge(page, total, false)).toBeVisible();
+  await expect(badge(page, total, false)).toBeVisible({ timeout: 15000 });
   await expectVisibleTeams(page, total);
 };
 
@@ -149,10 +170,13 @@ test('live-update refresh preserves loaded pages, cursors and Load-more state', 
     expect((await mkTeam(triggerName)).ok()).toBe(true);
     await expect(page.getByRole('link', { name: triggerName, exact: true })).toBeVisible();
     const afterInsert = simRefresh(total, total + 1);
-    await expect(badge(page, afterInsert.len, afterInsert.more)).toBeVisible();
+    // (N+) while converging, exact (N) once the remainder loaded - both are
+    // truthful, so wait for the threshold, not one exact rendering.
+    await expect.poll(() => badgeCount(page), { timeout: 15000 }).toBeGreaterThanOrEqual(afterInsert.len);
     await expect(page.getByRole('link', { name: `${prefix} Team 01`, exact: true })).toHaveCount(1);
     await expect(page.getByRole('link', { name: `${prefix} Team 29`, exact: true })).toHaveCount(1);
     await exhaust(page, afterInsert, total + 1);
+    await expectVisibleTeams(page, total + 1);
 
     // Removal: a loaded team stops being board-visible while another is
     // inserted; the same refresh drops the gone team and keeps coverage.
@@ -164,8 +188,9 @@ test('live-update refresh preserves loaded pages, cursors and Load-more state', 
     await expect(page.getByRole('link', { name: `${prefix} Team 15`, exact: true })).toHaveCount(0);
     await expect(page.getByRole('link', { name: `${prefix} Team 01`, exact: true })).toHaveCount(1);
     const afterRemoval = simRefresh(total + 1, total + 1);
-    await expect(badge(page, afterRemoval.len, afterRemoval.more)).toBeVisible();
+    await expect.poll(() => badgeCount(page), { timeout: 15000 }).toBeGreaterThanOrEqual(afterRemoval.len);
     await exhaust(page, afterRemoval, total + 1);
+    await expectVisibleTeams(page, total + 1);
 
     // Filter change resets to the filtered result set (Team 10-19 minus the
     // deleted Team 15 = 9); clearing returns to page 1 of the full set.
@@ -212,7 +237,6 @@ test('live-update refresh preserves coverage past the 200-row page cap', async (
      SELECT t.id, $1, t.leader_id, 'leader' FROM teams t WHERE t.name LIKE $2`,
     [h.id, `${prefix}%`]);
 
-  page.on('response', async (r) => { if (r.url().includes('/api/board')) { const j = await r.json().catch(() => null); console.log('BRES', decodeURIComponent(r.url()).slice(31, 90), 'teams=', j?.teams?.length, 'cur=', !!j?.next_teams_cursor); } });
   try {
     const total = await visibleTeamCount(client); // >= 205, plus earlier specs' leftovers
     // Same reasoning as above: consume the bulk seed's domain events first.
@@ -234,7 +258,9 @@ test('live-update refresh preserves coverage past the 200-row page cap', async (
     // seeded card both survive once the overflow is exhausted, no duplicates.
     await expect(page.getByRole('link', { name: triggerName, exact: true })).toBeVisible();
     const afterInsert = simRefresh(total, total + 1);
-    await expect(badge(page, afterInsert.len, afterInsert.more)).toBeVisible();
+    // (N+) while converging, exact (N) once the remainder loaded - both are
+    // truthful, so wait for the threshold, not one exact rendering.
+    await expect.poll(() => badgeCount(page), { timeout: 15000 }).toBeGreaterThanOrEqual(afterInsert.len);
     await expect(page.getByRole('link', { name: `${prefix} Team 100`, exact: true })).toHaveCount(1);
     await exhaust(page, afterInsert, total + 1);
     await expect(page.getByRole('link', { name: `${prefix} Team 001`, exact: true })).toBeVisible();

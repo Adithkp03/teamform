@@ -79,7 +79,7 @@ export default async function boardRoutes(app: FastifyInstance) {
              AND ($7::text IS NULL OR lp.timezone = $7)
              AND ($2::bigint IS NULL OR (t.created_at, t.id) < (to_timestamp($2::numeric / 1000000), $3::uuid))
            ORDER BY t.created_at DESC, t.id DESC
-           LIMIT $1
+           LIMIT $1 + 1
          )
          SELECT page.*, (page.member_count >= page.team_size_min) AS is_complete
          FROM page
@@ -97,10 +97,17 @@ export default async function boardRoutes(app: FastifyInstance) {
            AND ($6::text IS NULL OR p.timezone = $6)
            AND ($2::bigint IS NULL OR (p.last_active_at, p.id) < (to_timestamp($2::numeric / 1000000), $3::uuid))
          ORDER BY p.last_active_at DESC, p.id DESC
-         LIMIT $1`,
+         LIMIT $1 + 1`,
         [limit, pc?.us ?? null, pc?.id ?? null, q, query.skill ?? null, query.timezone ?? null],
       );
       const [teamsR, peopleR] = await Promise.all([teams, people]);
+      // One-row lookahead: fetch limit+1 and return limit, so a page that
+      // lands exactly on the set boundary (rows == limit, nothing after)
+      // emits NO cursor instead of a dangling one that pages an empty set.
+      const teamsHasMore = teamsR.rows.length > limit;
+      const peopleHasMore = peopleR.rows.length > limit;
+      if (teamsHasMore) teamsR.rows.length = limit;
+      if (peopleHasMore) peopleR.rows.length = limit;
       const lastT = teamsR.rows[teamsR.rows.length - 1];
       const lastP = peopleR.rows[peopleR.rows.length - 1];
       return {
@@ -108,8 +115,8 @@ export default async function boardRoutes(app: FastifyInstance) {
         // last_active_at is selected for cursor encoding only - never exposed.
         // cursor_us and last_active_at exist for cursor encoding only - never exposed.
         people: peopleR.rows.map(({ last_active_at, cursor_us, ...rest }: any) => rest),
-        next_teams_cursor: teamsR.rows.length === limit && lastT ? encCursor(lastT.cursor_us, lastT.id) : null,
-        next_people_cursor: peopleR.rows.length === limit && lastP ? encCursor(lastP.cursor_us, lastP.id) : null,
+        next_teams_cursor: teamsHasMore && lastT ? encCursor(lastT.cursor_us, lastT.id) : null,
+        next_people_cursor: peopleHasMore && lastP ? encCursor(lastP.cursor_us, lastP.id) : null,
         generated_at: new Date().toISOString(),
       };
     });
