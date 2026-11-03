@@ -1,0 +1,38 @@
+# TeamForm - submission requirement check
+Adith K P · 3 Nov 2026 · product-hardening edition · supersedes checklist v11
+
+**Public repo:** https://github.com/Adithkp03/teamform  
+**Live app:** https://teamform-web.vercel.app  
+**API health:** https://teamform-api.vercel.app/api/health
+
+## Implemented and tested
+- **Team rules:** min/max size; forming state; one team per person enforced by database uniqueness; expiring/rotatable invite code; leader transfer on departure; final member departure deletes the team.
+- **Race proof:** 50 concurrent joins for 1 remaining seat: 1 success, 49 clean 409s, checked final count 4. Eight concurrency tests also cover concurrent accepts, two-team races, idempotent retries and leader departure.
+- **Leader decisions:** server-side accept/decline/remove permissions, locked nonpending-request rejection, actor/subject audit history. UI alone is not the permission boundary.
+- **Invitations:** leaders invite people from the board or suggestions; one pending invite per (team, invitee) enforced by a partial unique index; invitee-only accept/decline, leader-only withdraw, requester cancel of their own join request; invite events stay private to the invitee over SSE in both poll modes.
+- **Auth/identity:** Firebase Authentication (Spark, no card) with server-side Google verification of every ID token, `email_verified` enforced server-side, uid-bound encrypted Firebase-refresh-token storage for revocation at rotation, legacy bcrypt sign-in retained, and legacy claim gated on password/session plus verified Firebase identity. Dev login and the offline token seam fail the deploy loudly if ever enabled in production.
+- **Retries:** exact keyed routes are create-team, join-by-code, create-request and rotate-invite. Response-loss replays return the identical stored response; a stored 4xx replays after the race resolves; a stale (>60s) in-flight key is taken over by the retry. Accept/decline are locked state transitions, leave/remove retry-safe deletes, profile last-write-wins.
+- **Live board/team:** SSE plus shared ~1s poller in production; production two-browser observations documented in the requirement audit. Not a latency guarantee.
+- **Suggestions:** grounded per-candidate reasons from the same stored fields the score uses, labelled a transparent heuristic; serves recorded as impressions and per-suggestion useful/not votes collected so ranking quality is measured (organizer funnel: serves, join-within-7d upper-bound proxy, vote split).
+- **Board:** server-side search + skill/timezone/capacity/looking filters persistent through cursor pagination (timezone now applies to team cards too); min-open-seats filter; 24-card pages; truncated counts say 24+; server-projected pending-request state; stale-response sequence guard.
+- **Organizer operations:** fail-closed allowlist (`ORGANIZER_EMAILS`) + verified-email requirement (an unverified account with an allowlisted address gets nothing - regression-tested). Event settings with audited before/after + over-cap report; audit search/CSV export surviving team deletion (manual retention policy: event + 90 days, export before cleanup - no automatic deletion); stuck-request cancel-with-reason (no operator force-accept); matching funnel.
+- **Observability:** `x-request-id` on every response + structured error logs; `/api/metrics` with per-route latency histograms, DB pool occupancy, live SSE clients; scheduled 15-min GitHub Actions health monitor (alerting is GitHub's native failure notification; the workflow sends nothing itself); incident/recovery runbook in `docs/operations.md`.
+- **Onboarding:** first-run checklist on the board (complete profile, join/create, suggestions) driven by the server profile/team state.
+- **UI:** light blue/white theme, responsive navigation/cards, labeled forms, visible focus, 44px touch targets. 320/390px widths, 200% zoom (CSS zoom emulation in the spec), and keyboard-only full flow covered by specs. Profile Save waits for initial load; failed form input is preserved with inline errors.
+- **Security defaults:** production-like boot refuses to start without CORS_ORIGIN (fail-closed); nosniff/frame-deny/no-referrer/default-deny-CSP headers on every API response; rate-limit buckets and idempotency records self-prune.
+- **Verification:** 157 API tests / 17 files on a fresh migration-only DB, 13 browser tests; axe scan reports no serious/critical violations on scanned pages, plus a 390px ARIA-semantics pass (naming, aria-pressed) - semantics verification, not VoiceOver/TalkBack. Chaos is 1 crash-recovery drill / 6 invariants, not 6 tests. Integrity fix: earlier hosted chaos runs passed vacuously (broken compose build context since the initial commit + missing `pipefail` masked the failures); this revision repairs the pipeline and asserts the storm reached the API - the green chaos run on this SHA is the first verified real drill.
+
+## Scale evidence: keep the labels
+10,000 synthetic profiles/2,000 teams is a dataset size, **not 10,000 simultaneous users**. Board workload 100 readers; mixed 99 readers + 4 paced mutators. Local full-seed board p95 138-140ms, 0 failures. Historical CI pairs (board p95 / mixed p95): `35f54a6` 74.13/206.47 (**mixed FAILED**); identical app `0d0b5aa` 23.06/36.20 (pass); `3868857` 40.62/47.28 (pass). Run links and raw measurements: `docs/load-test-report.md`. Sample variability cause unproven.
+
+## Current revision checks and deliverables
+Tested app bundle `6b41a19`: hosted CI test, e2e, chaos and k6 load all passed on that SHA (CI test https://github.com/Adithkp03/teamform/actions/runs/41580838981, e2e https://github.com/Adithkp03/teamform/actions/runs/41580838910, chaos https://github.com/Adithkp03/teamform/actions/runs/41580838957 (log read: image built, 20-worker storm reached the API - ok=60, 373 expected conflicts, 367 transport failures at the kill - all 6 invariants PASS), k6 load https://github.com/Adithkp03/teamform/actions/runs/41580839032). Migration 0010 (`firebase_uid` + unique index), 0011 (encrypted Firebase refresh storage), 0012 (organizer/suggestion metrics) and 0013 (team invitations) applied to production and proven on a fresh migration-only database. Walkthrough video v10 (4m43s) covers the core submission; supplement clip (44s) covers the organizer console and matching feedback; second supplement (19s) covers the new invitation journey end to end - all local demo captures.
+
+## Open limits: do not call these done
+- **One owner-verified real-inbox email receipt pending.** Firebase sends verification/reset mail; the exchange is proven against real Google-signed tokens, but end-to-end inbox receipt is owner-verified post-deploy. Free-tier mail can land in spam.
+- **Full legacy->Firebase claim with a verified identity is NOT yet verified end to end.** Proven on production: an unverified Firebase identity is refused 403 at the claim gate, and legacy password sign-in/session works (synthetic account, cleaned up). The completed verified claim awaits the same real inbox.
+- **Production p95 unmeasured.** No production load testing; Vercel Hobby policy/caps still apply.
+- Single-hackathon deployment; enrollment/multi-event scope is future work.
+- Free tiers only; no card or organizer submission.
+
+Latest verified load workflow on the deployed SHA: https://github.com/Adithkp03/teamform/actions/runs/41580839032
