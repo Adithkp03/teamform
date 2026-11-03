@@ -7,7 +7,17 @@ cd "$(dirname "$0")/.."
 export DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@localhost:5432/teamform}
 
 echo "== starting stack =="
-docker compose up -d --build --wait db api
+# On any startup failure, dump the actual container state and logs - a green
+# checkmark without the containers' own output is not evidence.
+if ! docker compose up -d --build --wait db api; then
+  echo "== stack failed to become healthy: container state =="
+  docker compose ps -a || true
+  echo "== api container logs =="
+  docker compose logs api || true
+  echo "== db container logs =="
+  docker compose logs db | tail -30 || true
+  exit 1
+fi
 
 echo "== seeding (small: 300 users, 80 teams) =="
 docker compose exec -T db psql -U postgres -d teamform -c 'SELECT 1' >/dev/null
@@ -23,7 +33,11 @@ docker compose kill api
 sleep 1
 
 echo "== restarting API =="
-docker compose up -d --wait api
+if ! docker compose up -d --wait api; then
+  echo "== api failed to restart: container logs =="
+  docker compose logs api || true
+  exit 1
+fi
 wait $STORM_PID || true
 
 # Vacuous-pass guard: the storm must have actually attempted joins against the
