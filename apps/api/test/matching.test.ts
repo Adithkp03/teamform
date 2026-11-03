@@ -41,3 +41,23 @@ describe('suggestions: circular timezone distance', () => {
     expect(await fit(me2.token, cand.id)).toBe(2);
   });
 });
+
+describe('suggestions: live IANA offsets (DST-safe)', () => {
+  beforeEach(() => resetDb());
+
+  it('a stale stored offset does not skew scoring - the IANA name wins', async () => {
+    // Me: Asia/Kolkata, but the stored offset drifted to 0 (as after a DST
+    // change with no profile re-save). Candidate: Europe/London, stored 0.
+    // Live offsets are 330 vs 0 (winter) - 5.5h apart, never within 2h.
+    const me = await looking('Me', 330, 'Asia/Kolkata');
+    await pool.query(`UPDATE profiles SET utc_offset_minutes = 0 WHERE id = $1`, [me.id]);
+    const cand = await looking('Cand', 0, 'Europe/London');
+    expect(await fit(me.token, cand.id)).toBe(0);
+  });
+
+  it('free-form zone names fall back to the saved offset', async () => {
+    const me = await looking('Me', 330, 'Asia/Calcutta');
+    const cand = await looking('Cand', 330, 'Mars/Olympus');
+    expect(await fit(me.token, cand.id)).toBe(2);
+  });
+});

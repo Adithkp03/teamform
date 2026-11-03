@@ -39540,65 +39540,6 @@ var require_cors = __commonJS({
   }
 });
 
-// src/metrics.ts
-var metrics_exports = {};
-__export(metrics_exports, {
-  record: () => record,
-  recordPoolError: () => recordPoolError,
-  setPoolStats: () => setPoolStats,
-  setSseClients: () => setSseClients,
-  snapshot: () => snapshot
-});
-function setSseClients(n) {
-  sseClients = n;
-}
-function recordPoolError() {
-  poolErrors++;
-}
-function setPoolStats(total, idle, waiting) {
-  poolStats = { total, idle, waiting };
-}
-function record(route, statusCode, durationMs) {
-  let m = routes.get(route);
-  if (!m) {
-    m = { requests: 0, errors: 0, latency: new Array(buckets.length).fill(0) };
-    routes.set(route, m);
-  }
-  m.requests++;
-  if (statusCode >= 500) m.errors++;
-  const idx = buckets.findIndex((b) => durationMs <= b);
-  m.latency[idx === -1 ? buckets.length - 1 : idx]++;
-}
-function snapshot() {
-  const out = {
-    uptime_seconds: Math.round((Date.now() - startedAt) / 1e3),
-    sse_clients: sseClients,
-    db_pool: { ...poolStats, errors: poolErrors },
-    routes: {}
-  };
-  for (const [route, m] of routes) {
-    out.routes[route] = {
-      requests: m.requests,
-      errors: m.errors,
-      latency_bucket_bounds_ms: buckets.map((b) => b === Infinity ? "+Inf" : b),
-      latency_bucket_counts: m.latency
-    };
-  }
-  return out;
-}
-var buckets, routes, startedAt, sseClients, poolErrors, poolStats;
-var init_metrics = __esm({
-  "src/metrics.ts"() {
-    "use strict";
-    buckets = [25, 50, 100, 200, 400, 1e3, Infinity];
-    routes = /* @__PURE__ */ new Map();
-    startedAt = Date.now();
-    sseClients = 0;
-    poolErrors = 0;
-    poolStats = { total: 0, idle: 0, waiting: 0 };
-  }
-});
-
 // ../../node_modules/postgres-array/index.js
 var require_postgres_array = __commonJS({
   "../../node_modules/postgres-array/index.js"(exports) {
@@ -44907,6 +44848,173 @@ var require_lib3 = __commonJS({
         return native;
       }
     });
+  }
+});
+
+// ../../node_modules/pg/esm/index.mjs
+var import_lib, Client, Pool, Connection, types, Query, DatabaseError, escapeIdentifier, escapeLiteral, Result, TypeOverrides, defaults, esm_default;
+var init_esm = __esm({
+  "../../node_modules/pg/esm/index.mjs"() {
+    import_lib = __toESM(require_lib3(), 1);
+    Client = import_lib.default.Client;
+    Pool = import_lib.default.Pool;
+    Connection = import_lib.default.Connection;
+    types = import_lib.default.types;
+    Query = import_lib.default.Query;
+    DatabaseError = import_lib.default.DatabaseError;
+    escapeIdentifier = import_lib.default.escapeIdentifier;
+    escapeLiteral = import_lib.default.escapeLiteral;
+    Result = import_lib.default.Result;
+    TypeOverrides = import_lib.default.TypeOverrides;
+    defaults = import_lib.default.defaults;
+    esm_default = import_lib.default;
+  }
+});
+
+// src/db.ts
+async function withTx(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {
+    });
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+var Pool2, dbUrl, useSsl, pool;
+var init_db = __esm({
+  "src/db.ts"() {
+    "use strict";
+    init_esm();
+    init_metrics();
+    ({ Pool: Pool2 } = esm_default);
+    dbUrl = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/teamform";
+    useSsl = /neon\.tech|sslmode=require/.test(dbUrl);
+    pool = new Pool2({
+      connectionString: dbUrl,
+      ...useSsl ? { ssl: { rejectUnauthorized: false } } : {},
+      // Small pool per serverless instance; Postgres stays the contention point by design.
+      max: Number(process.env.PG_POOL_MAX || 5),
+      idleTimeoutMillis: 1e4,
+      connectionTimeoutMillis: 5e3
+    });
+    pool.on("error", () => recordPoolError());
+    setInterval(() => setPoolStats(pool.totalCount, pool.idleCount, pool.waitingCount), 5e3).unref();
+    setPoolStats(pool.totalCount, pool.idleCount, pool.waitingCount);
+  }
+});
+
+// src/metrics.ts
+var metrics_exports = {};
+__export(metrics_exports, {
+  durable24h: () => durable24h,
+  flushOnce: () => flushOnce,
+  flushToDb: () => flushToDb,
+  record: () => record,
+  recordPoolError: () => recordPoolError,
+  setPoolStats: () => setPoolStats,
+  setSseClients: () => setSseClients,
+  snapshot: () => snapshot
+});
+function setSseClients(n) {
+  sseClients = n;
+}
+function recordPoolError() {
+  poolErrors++;
+}
+function setPoolStats(total, idle, waiting) {
+  poolStats = { total, idle, waiting };
+}
+function record(route, statusCode, durationMs) {
+  let m = routes.get(route);
+  if (!m) {
+    m = { requests: 0, errors: 0, latency: new Array(buckets.length).fill(0) };
+    routes.set(route, m);
+  }
+  m.requests++;
+  if (statusCode >= 500) m.errors++;
+  const idx = buckets.findIndex((b) => durationMs <= b);
+  m.latency[idx === -1 ? buckets.length - 1 : idx]++;
+}
+function snapshot() {
+  const out = {
+    uptime_seconds: Math.round((Date.now() - startedAt) / 1e3),
+    sse_clients: sseClients,
+    db_pool: { ...poolStats, errors: poolErrors },
+    routes: {}
+  };
+  for (const [route, m] of routes) {
+    out.routes[route] = {
+      requests: m.requests,
+      errors: m.errors,
+      latency_bucket_bounds_ms: buckets.map((b) => b === Infinity ? "+Inf" : b),
+      latency_bucket_counts: m.latency
+    };
+  }
+  return out;
+}
+async function flushToDb(now = Date.now()) {
+  const windowStart = new Date(Math.floor(now / WINDOW_MS) * WINDOW_MS);
+  let n = 0;
+  for (const [route, m] of routes) {
+    const prev = flushed.get(route);
+    const dReq = m.requests - (prev?.requests ?? 0);
+    const dErr = m.errors - (prev?.errors ?? 0);
+    const dLat = m.latency.map((c, i) => c - (prev?.latency[i] ?? 0));
+    if (dReq === 0 && dErr === 0 && dLat.every((d) => d === 0)) continue;
+    await pool.query(
+      `INSERT INTO metrics_rollups (window_start, route, requests, errors, latency_counts)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (window_start, route) DO UPDATE SET
+         requests = metrics_rollups.requests + EXCLUDED.requests,
+         errors = metrics_rollups.errors + EXCLUDED.errors,
+         latency_counts = (SELECT array_agg(COALESCE(a,0)+COALESCE(b,0))
+                           FROM unnest(metrics_rollups.latency_counts, EXCLUDED.latency_counts) AS u(a,b))`,
+      [windowStart, route, dReq, dErr, dLat]
+    );
+    flushed.set(route, { requests: m.requests, errors: m.errors, latency: [...m.latency] });
+    n++;
+  }
+  await pool.query(`DELETE FROM metrics_rollups WHERE window_start < now() - interval '${RETENTION}'`);
+  return n;
+}
+function flushOnce() {
+  if (!flushing) {
+    flushing = flushToDb().catch(() => {
+    }).finally(() => {
+      flushing = null;
+    });
+  }
+}
+async function durable24h() {
+  const { rows } = await pool.query(
+    `SELECT route, sum(requests)::int AS requests, sum(errors)::int AS errors
+     FROM metrics_rollups WHERE window_start > now() - interval '24 hours'
+     GROUP BY route ORDER BY requests DESC`
+  );
+  return rows;
+}
+var buckets, routes, startedAt, sseClients, poolErrors, poolStats, WINDOW_MS, RETENTION, flushed, flushing;
+var init_metrics = __esm({
+  "src/metrics.ts"() {
+    "use strict";
+    init_db();
+    buckets = [25, 50, 100, 200, 400, 1e3, Infinity];
+    routes = /* @__PURE__ */ new Map();
+    startedAt = Date.now();
+    sseClients = 0;
+    poolErrors = 0;
+    poolStats = { total: 0, idle: 0, waiting: 0 };
+    WINDOW_MS = 5 * 60 * 1e3;
+    RETENTION = "14 days";
+    flushed = /* @__PURE__ */ new Map();
+    flushing = null;
   }
 });
 
@@ -52845,54 +52953,11 @@ var bcryptjs_default = {
   decodeBase64
 };
 
-// ../../node_modules/pg/esm/index.mjs
-var import_lib = __toESM(require_lib3(), 1);
-var Client = import_lib.default.Client;
-var Pool = import_lib.default.Pool;
-var Connection = import_lib.default.Connection;
-var types = import_lib.default.types;
-var Query = import_lib.default.Query;
-var DatabaseError = import_lib.default.DatabaseError;
-var escapeIdentifier = import_lib.default.escapeIdentifier;
-var escapeLiteral = import_lib.default.escapeLiteral;
-var Result = import_lib.default.Result;
-var TypeOverrides = import_lib.default.TypeOverrides;
-var defaults = import_lib.default.defaults;
-var esm_default = import_lib.default;
-
-// src/db.ts
-init_metrics();
-var { Pool: Pool2 } = esm_default;
-var dbUrl = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/teamform";
-var useSsl = /neon\.tech|sslmode=require/.test(dbUrl);
-var pool = new Pool2({
-  connectionString: dbUrl,
-  ...useSsl ? { ssl: { rejectUnauthorized: false } } : {},
-  // Small pool per serverless instance; Postgres stays the contention point by design.
-  max: Number(process.env.PG_POOL_MAX || 5),
-  idleTimeoutMillis: 1e4,
-  connectionTimeoutMillis: 5e3
-});
-pool.on("error", () => recordPoolError());
-setInterval(() => setPoolStats(pool.totalCount, pool.idleCount, pool.waitingCount), 5e3).unref();
-setPoolStats(pool.totalCount, pool.idleCount, pool.waitingCount);
-async function withTx(fn) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const result = await fn(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (err) {
-    await client.query("ROLLBACK").catch(() => {
-    });
-    throw err;
-  } finally {
-    client.release();
-  }
-}
+// src/routes/auth.ts
+init_db();
 
 // src/ratelimit.ts
+init_db();
 async function pruneRateLimits() {
   await pool.query(`DELETE FROM rate_limits WHERE window_start < now() - interval '2 hours'`);
 }
@@ -52911,6 +52976,7 @@ async function rateLimit(key, limit, windowSeconds = 60) {
 
 // src/auth.ts
 var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
+init_db();
 import { createHash, randomBytes as randomBytes3 } from "node:crypto";
 var secret = () => {
   const s = process.env.JWT_SECRET;
@@ -53464,7 +53530,11 @@ async function authRoutes(app2) {
   });
 }
 
+// src/routes/teams.ts
+init_db();
+
 // src/idempotency.ts
+init_db();
 import crypto2 from "node:crypto";
 var STALE_MS = 6e4;
 function hash2(value) {
@@ -53982,6 +54052,7 @@ async function teamRoutes(app2) {
 }
 
 // src/routes/board.ts
+init_db();
 function parseCursor(raw) {
   if (typeof raw !== "string" || !raw) return null;
   try {
@@ -54074,30 +54145,44 @@ async function boardRoutes(app2) {
     return { ok: true, commit: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.COMMIT_SHA ?? null };
   });
   app2.get("/api/metrics", { preHandler: requireOrganizer }, async () => {
-    const { snapshot: snapshot2 } = await Promise.resolve().then(() => (init_metrics(), metrics_exports));
-    return snapshot2();
+    const { snapshot: snapshot2, flushToDb: flushToDb2, durable24h: durable24h2 } = await Promise.resolve().then(() => (init_metrics(), metrics_exports));
+    await flushToDb2();
+    return { ...snapshot2(), durable_24h: await durable24h2(), rollup_retention: "14 days, pruned on every flush" };
   });
 }
 
 // src/routes/suggestions.ts
+init_db();
 async function suggestionRoutes(app2) {
   app2.get("/api/suggestions", { preHandler: authenticate }, async (req) => {
     await rateLimit(`suggest:${req.userId}`, 30, 60);
     const { rows } = await pool.query(
-      `WITH me AS (SELECT skills, utc_offset_minutes FROM profiles WHERE id = $1),
+      `WITH me AS (SELECT skills, timezone, utc_offset_minutes FROM profiles WHERE id = $1),
+            live_offset AS (
+              SELECT CASE WHEN p.timezone IN (SELECT name FROM pg_timezone_names)
+                          THEN round(EXTRACT(EPOCH FROM (now() AT TIME ZONE p.timezone - now() AT TIME ZONE 'UTC')) / 60)::int
+                          ELSE p.utc_offset_minutes END AS off, p.id AS pid
+              FROM profiles p
+            ),
+            me_off AS (
+              SELECT CASE WHEN m.timezone IN (SELECT name FROM pg_timezone_names)
+                          THEN round(EXTRACT(EPOCH FROM (now() AT TIME ZONE m.timezone - now() AT TIME ZONE 'UTC')) / 60)::int
+                          ELSE m.utc_offset_minutes END AS off
+              FROM me m
+            ),
             scored AS (
          SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at,
            (SELECT count(*)::int FROM (SELECT unnest(p.skills) EXCEPT SELECT unnest(me.skills)) d) AS complementary_skills,
            (SELECT count(*)::int FROM (SELECT unnest(p.skills) INTERSECT SELECT unnest(me.skills)) s) AS shared_skills,
            (SELECT coalesce(array_agg(x.skill), '{}') FROM (SELECT unnest(p.skills) AS skill EXCEPT SELECT unnest(me.skills)) x) AS complementary_skill_names,
            (SELECT coalesce(array_agg(y.skill), '{}') FROM (SELECT unnest(p.skills) AS skill INTERSECT SELECT unnest(me.skills)) y) AS shared_skill_names,
-           (CASE WHEN least((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440,
-                            1440 - ((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440)) = 0 THEN 2
-                 WHEN least((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440,
-                            1440 - ((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440)) <= 120 THEN 1
+           (CASE WHEN least((abs(lo.off - mo.off)) % 1440,
+                            1440 - ((abs(lo.off - mo.off)) % 1440)) = 0 THEN 2
+                 WHEN least((abs(lo.off - mo.off)) % 1440,
+                            1440 - ((abs(lo.off - mo.off)) % 1440)) <= 120 THEN 1
                  ELSE 0 END) AS timezone_fit
-         FROM profiles p, me
-         WHERE p.looking_for_team AND p.id <> $1
+         FROM profiles p, me, live_offset lo, me_off mo
+         WHERE lo.pid = p.id AND p.looking_for_team AND p.id <> $1
            AND NOT EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = p.id)
        )
        SELECT *, (2 * complementary_skills + shared_skills + timezone_fit) AS score
@@ -54150,6 +54235,8 @@ async function suggestionRoutes(app2) {
 }
 
 // src/routes/events.ts
+init_esm();
+init_db();
 init_metrics();
 var MODE = process.env.REALTIME_MODE || "poll";
 var POLL_MS = Number(process.env.EVENTS_POLL_MS || 1e3);
@@ -54420,6 +54507,7 @@ data: {"reason":"max_stream_age"}
 }
 
 // src/routes/organizer.ts
+init_db();
 var uuidParam2 = external_exports.string().uuid();
 var auditQuerySchema = external_exports.object({
   action: external_exports.string().trim().max(80).optional(),
@@ -54618,6 +54706,45 @@ async function organizerRoutes(app2) {
       note: "Heuristic validation in progress: join_within_7d is an upper-bound proxy (any team join, not suggestion-caused); present scores as a transparent heuristic until post-event outcome data exists."
     };
   });
+  const sweepSchema = external_exports.object({ dry_run: external_exports.boolean().default(true) }).default({});
+  app2.post("/api/organizer/retention/sweep", pre, async (req) => {
+    await rateLimit(`org:${req.userId}`, 10, 60);
+    const { dry_run } = parse(sweepSchema, req.body ?? {}) ?? { dry_run: true };
+    const targets = [
+      { name: "rate_limits", table: "rate_limits", where: "window_start < now() - interval '2 hours'" },
+      { name: "idempotency_keys", table: "idempotency_keys", where: "updated_at < now() - interval '24 hours'" },
+      { name: "auth_refresh_tokens", table: "auth_refresh_tokens", where: "expires_at < now() - interval '7 days'" },
+      { name: "auth_action_tokens", table: "auth_action_tokens", where: "expires_at < now() - interval '1 day' OR used_at < now() - interval '1 day'" },
+      { name: "domain_events", table: "domain_events", where: "dispatched_seq IS NOT NULL AND created_at < now() - interval '7 days'" },
+      { name: "suggestion_impressions", table: "suggestion_impressions", where: "created_at < now() - interval '30 days'" },
+      { name: "metrics_rollups", table: "metrics_rollups", where: "window_start < now() - interval '14 days'" }
+    ];
+    const counts = {};
+    let swept = false;
+    if (dry_run) {
+      for (const t of targets) {
+        const { rows } = await pool.query(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${t.where}`);
+        counts[t.name] = rows[0].n;
+      }
+    } else {
+      await withTx(async (c) => {
+        for (const t of targets) {
+          const r = await c.query(`DELETE FROM ${t.table} WHERE ${t.where}`);
+          counts[t.name] = r.rowCount ?? 0;
+        }
+        const h = await currentHackathon2();
+        await c.query(
+          `INSERT INTO audit_log (hackathon_id, actor_id, action, metadata) VALUES ($1, $2, 'retention_sweep', $3)`,
+          [h.id, req.userId, JSON.stringify({ pruned: counts })]
+        );
+      });
+      swept = true;
+    }
+    const { rows: last } = await pool.query(
+      `SELECT max(created_at) AS at FROM audit_log WHERE action = 'retention_sweep'`
+    );
+    return { dry_run, swept, counts, last_swept_at: last[0].at ?? null };
+  });
 }
 
 // src/app.ts
@@ -54639,7 +54766,8 @@ function buildApp(opts = {}) {
     done();
   });
   app2.addHook("onResponse", async (req, reply) => {
-    record(req.routeOptions?.url ?? req.url, reply.statusCode, reply.elapsedTime);
+    record(req.routeOptions?.url ?? "(unmatched)", reply.statusCode, reply.elapsedTime);
+    if (Math.random() < 0.01) flushOnce();
   });
   app2.addHook("onSend", (req, reply, payload, done) => {
     if (req.method !== "GET" && reply.statusCode < 300 && /^\/api\/(teams|requests|me)(\/|$)/.test(req.url)) {

@@ -189,3 +189,54 @@ describe('organizer identity binding', () => {
     expect(ok.statusCode).toBe(200);
   });
 });
+
+describe('retention sweep', () => {
+  test('dry-run counts without deleting; real sweep prunes and is audited; audit_log itself is never swept', async () => {
+    const org = await makeEmailUser('Org', ORG);
+    const u = await makeUser('U');
+    // stale + fresh rows across the sweep targets
+    await pool.query(`INSERT INTO rate_limits (key, window_start, count) VALUES
+      ('old', now() - interval '3 hours', 5), ('live', now(), 1)`);
+    await pool.query(`INSERT INTO metrics_rollups (window_start, route, requests) VALUES
+      (now() - interval '15 days', '/api/old', 9), (now(), '/api/new', 1)`);
+    await pool.query(`INSERT INTO suggestion_impressions (user_id, candidate_id, score) VALUES ($1, $2, 5)`, [u.id, org.id]);
+    await pool.query(`UPDATE suggestion_impressions SET created_at = now() - interval '31 days'`);
+    await pool.query(`INSERT INTO audit_log (hackathon_id, actor_id, action, metadata, created_at)
+      SELECT id, $1, 'old_event', '{}', now() - interval '60 days' FROM hackathons`, [u.id]);
+
+    const headers = { ...auth(org.token), 'content-type': 'application/json' };
+    // dry-run: counts, no deletion, no audit write
+    const dry = await app.inject({ method: 'POST', url: '/api/organizer/retention/sweep', headers, payload: { dry_run: true } });
+    expect(dry.statusCode).toBe(200);
+    expect(dry.json().dry_run).toBe(true);
+    expect(dry.json().counts.rate_limits).toBe(1);
+    expect(dry.json().counts.metrics_rollups).toBe(1);
+    expect(dry.json().counts.suggestion_impressions).toBe(1);
+    expect((await pool.query(`SELECT count(*)::int AS n FROM rate_limits WHERE key IN ('old','live')`)).rows[0].n).toBe(2);
+    expect(dry.json().last_swept_at).toBeNull();
+
+    // real sweep: deletes stale, keeps fresh, audits itself
+    const real = await app.inject({ method: 'POST', url: '/api/organizer/retention/sweep', headers, payload: { dry_run: false } });
+    expect(real.statusCode).toBe(200);
+    expect(real.json().swept).toBe(true);
+    expect(real.json().counts.rate_limits).toBe(1);
+    expect((await pool.query(`SELECT key FROM rate_limits WHERE key IN ('old','live')`)).rows.map((r: any) => r.key)).toEqual(['live']);
+    expect((await pool.query(`SELECT route FROM metrics_rollups`)).rows.map((r: any) => r.route)).toEqual(['/api/new']);
+    expect((await pool.query(`SELECT count(*)::int AS n FROM suggestion_impressions`)).rows[0].n).toBe(0);
+    expect(real.json().last_swept_at).not.toBeNull();
+    const { rows: audit } = await pool.query(`SELECT action FROM audit_log ORDER BY created_at`);
+    expect(audit.map((a: any) => a.action)).toContain('retention_sweep');
+    expect(audit.map((a: any) => a.action)).toContain('old_event'); // audit rows never swept
+
+    // empty body defaults to dry-run (a bare POST can never delete)
+    const bare = await app.inject({ method: 'POST', url: '/api/organizer/retention/sweep', headers: auth(org.token) });
+    expect(bare.statusCode).toBe(200);
+    expect(bare.json().dry_run).toBe(true);
+  });
+
+  test('non-organizers cannot sweep', async () => {
+    const u = await makeUser('R');
+    expect((await app.inject({ method: 'POST', url: '/api/organizer/retention/sweep' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'POST', url: '/api/organizer/retention/sweep', headers: auth(u.token) })).statusCode).toBe(403);
+  });
+});

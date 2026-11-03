@@ -3,7 +3,7 @@ import { invalidateBoard } from './boardcache.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { ApiError } from './errors.js';
-import { record } from './metrics.js';
+import { record, flushOnce } from './metrics.js';
 import { prodLike } from './firebase.js';
 import authRoutes from './routes/auth.js';
 import teamRoutes from './routes/teams.js';
@@ -47,7 +47,8 @@ export function buildApp(opts: { logger?: boolean } = {}) {
   });
 
   app.addHook('onResponse', async (req, reply) => {
-    record(req.routeOptions?.url ?? req.url, reply.statusCode, reply.elapsedTime);
+    record(req.routeOptions?.url ?? '(unmatched)', reply.statusCode, reply.elapsedTime);
+    if (Math.random() < 0.01) flushOnce();
   });
 
   // Board-cache invalidation at ROOT scope so it covers every route plugin

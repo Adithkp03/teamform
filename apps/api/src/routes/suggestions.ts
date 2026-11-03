@@ -11,8 +11,9 @@ import { parse } from '../util.js';
  *         + 1 * shared_skills          (common ground helps collaboration)
  *         + timezone_fit               (same clock time = 2, clock-time within 2h = 1, else 0;
  *           distance is circular on the 24h clock, so UTC-12 vs UTC+14 is 2h apart,
- *           not 26h. Offsets are reconciled from the IANA zone name at profile
- *           write, so DST drift is bounded by the user's last profile save.)
+ *           not 26h. Offsets are derived LIVE from the IANA zone name at serve
+ *           time (Postgres tz database), so a DST change never skews scoring;
+ *           free-form zone names fall back to the saved offset.)
  * Every candidate in the response carries the score components so the ranking
  * is explainable, not a black box. Deterministic tie-break: most recently active.
  */
@@ -20,20 +21,32 @@ export default async function suggestionRoutes(app: FastifyInstance) {
   app.get('/api/suggestions', { preHandler: authenticate }, async (req: any) => {
     await rateLimit(`suggest:${req.userId}`, 30, 60);
     const { rows } = await pool.query(
-      `WITH me AS (SELECT skills, utc_offset_minutes FROM profiles WHERE id = $1),
+      `WITH me AS (SELECT skills, timezone, utc_offset_minutes FROM profiles WHERE id = $1),
+            live_offset AS (
+              SELECT CASE WHEN p.timezone IN (SELECT name FROM pg_timezone_names)
+                          THEN round(EXTRACT(EPOCH FROM (now() AT TIME ZONE p.timezone - now() AT TIME ZONE 'UTC')) / 60)::int
+                          ELSE p.utc_offset_minutes END AS off, p.id AS pid
+              FROM profiles p
+            ),
+            me_off AS (
+              SELECT CASE WHEN m.timezone IN (SELECT name FROM pg_timezone_names)
+                          THEN round(EXTRACT(EPOCH FROM (now() AT TIME ZONE m.timezone - now() AT TIME ZONE 'UTC')) / 60)::int
+                          ELSE m.utc_offset_minutes END AS off
+              FROM me m
+            ),
             scored AS (
          SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at,
            (SELECT count(*)::int FROM (SELECT unnest(p.skills) EXCEPT SELECT unnest(me.skills)) d) AS complementary_skills,
            (SELECT count(*)::int FROM (SELECT unnest(p.skills) INTERSECT SELECT unnest(me.skills)) s) AS shared_skills,
            (SELECT coalesce(array_agg(x.skill), '{}') FROM (SELECT unnest(p.skills) AS skill EXCEPT SELECT unnest(me.skills)) x) AS complementary_skill_names,
            (SELECT coalesce(array_agg(y.skill), '{}') FROM (SELECT unnest(p.skills) AS skill INTERSECT SELECT unnest(me.skills)) y) AS shared_skill_names,
-           (CASE WHEN least((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440,
-                            1440 - ((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440)) = 0 THEN 2
-                 WHEN least((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440,
-                            1440 - ((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440)) <= 120 THEN 1
+           (CASE WHEN least((abs(lo.off - mo.off)) % 1440,
+                            1440 - ((abs(lo.off - mo.off)) % 1440)) = 0 THEN 2
+                 WHEN least((abs(lo.off - mo.off)) % 1440,
+                            1440 - ((abs(lo.off - mo.off)) % 1440)) <= 120 THEN 1
                  ELSE 0 END) AS timezone_fit
-         FROM profiles p, me
-         WHERE p.looking_for_team AND p.id <> $1
+         FROM profiles p, me, live_offset lo, me_off mo
+         WHERE lo.pid = p.id AND p.looking_for_team AND p.id <> $1
            AND NOT EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = p.id)
        )
        SELECT *, (2 * complementary_skills + shared_skills + timezone_fit) AS score

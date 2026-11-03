@@ -110,7 +110,8 @@ export default async function boardRoutes(app: FastifyInstance) {
   // In-process operational telemetry. Organizer-only: pool occupancy and
   // per-route latency are operational details, not public information.
   app.get('/api/metrics', { preHandler: requireOrganizer }, async () => {
-    const { snapshot } = await import('../metrics.js');
-    return snapshot();
+    const { snapshot, flushToDb, durable24h } = await import('../metrics.js');
+    await flushToDb();
+    return { ...snapshot(), durable_24h: await durable24h(), rollup_retention: '14 days, pruned on every flush' };
   });
 }

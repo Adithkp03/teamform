@@ -249,4 +249,52 @@ export default async function organizerRoutes(app: FastifyInstance) {
       note: 'Heuristic validation in progress: join_within_7d is an upper-bound proxy (any team join, not suggestion-caused); present scores as a transparent heuristic until post-event outcome data exists.',
     };
   });
+  // ---- Retention sweep (review-driven): the manual retention policy in
+  // docs/operations.md only bounds free-DB growth if it is actually performed
+  // and tracked. This endpoint performs it: dry-run by default, each real
+  // sweep is audited with per-table counts. Expired auth artifacts, stale
+  // rate-limit/idempotency windows, dispatched domain events past the SSE
+  // replay window, old suggestion impressions and metric rollups are pruned;
+  // audit_log and live user/team data are NEVER touched.
+  const sweepSchema = z.object({ dry_run: z.boolean().default(true) }).default({});
+
+  app.post('/api/organizer/retention/sweep', pre, async (req: any) => {
+    await rateLimit(`org:${req.userId}`, 10, 60);
+    const { dry_run } = parse(sweepSchema, req.body ?? {}) ?? { dry_run: true };
+    const targets: { name: string; where: string; table: string }[] = [
+      { name: 'rate_limits', table: 'rate_limits', where: "window_start < now() - interval '2 hours'" },
+      { name: 'idempotency_keys', table: 'idempotency_keys', where: "updated_at < now() - interval '24 hours'" },
+      { name: 'auth_refresh_tokens', table: 'auth_refresh_tokens', where: "expires_at < now() - interval '7 days'" },
+      { name: 'auth_action_tokens', table: 'auth_action_tokens', where: "expires_at < now() - interval '1 day' OR used_at < now() - interval '1 day'" },
+      { name: 'domain_events', table: 'domain_events', where: "dispatched_seq IS NOT NULL AND created_at < now() - interval '7 days'" },
+      { name: 'suggestion_impressions', table: 'suggestion_impressions', where: "created_at < now() - interval '30 days'" },
+      { name: 'metrics_rollups', table: 'metrics_rollups', where: "window_start < now() - interval '14 days'" },
+    ];
+    const counts: Record<string, number> = {};
+    let swept = false;
+    if (dry_run) {
+      for (const t of targets) {
+        const { rows } = await pool.query(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${t.where}`);
+        counts[t.name] = rows[0].n;
+      }
+    } else {
+      await withTx(async (c) => {
+        for (const t of targets) {
+          const r = await c.query(`DELETE FROM ${t.table} WHERE ${t.where}`);
+          counts[t.name] = r.rowCount ?? 0;
+        }
+        const h = await currentHackathon();
+        await c.query(
+          `INSERT INTO audit_log (hackathon_id, actor_id, action, metadata) VALUES ($1, $2, 'retention_sweep', $3)`,
+          [h.id, req.userId, JSON.stringify({ pruned: counts })],
+        );
+      });
+      swept = true;
+    }
+    // Last-sweep tracking: when was retention most recently performed?
+    const { rows: last } = await pool.query(
+      `SELECT max(created_at) AS at FROM audit_log WHERE action = 'retention_sweep'`,
+    );
+    return { dry_run, swept, counts, last_swept_at: last[0].at ?? null };
+  });
 }

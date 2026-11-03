@@ -337,6 +337,10 @@ describe('board, suggestions, metrics', () => {
     const comp = await makeUser('Backend Dev', ['node', 'postgres'], 330);   // 2 complementary
     const shared = await makeUser('Frontend Dev', ['react'], 330);           // 1 shared
     const far = await makeUser('Far Away', ['go'], -480);                    // tz mismatch
+    // Scoring derives offsets live from the IANA zone (DST-safe); makeUser's
+    // default timezone 'UTC' would score everyone at UTC. Put 'far' on the
+    // zone its stored offset corresponds to, as the profile write path does.
+    await pool.query(`UPDATE profiles SET timezone = 'Etc/GMT+8' WHERE id = $1`, [far.id]);
     const res = await app.inject({ method: 'GET', url: '/api/suggestions', headers: auth(me.token) });
     const s = res.json().suggestions;
     expect(res.json().scoring).toContain('complementary');
