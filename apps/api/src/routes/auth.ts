@@ -426,6 +426,46 @@ export default async function authRoutes(app: FastifyInstance) {
     return { profile: rows[0] };
   });
 
+  // Self-serve own-data export (privacy review): everything stored about the
+  // caller, explicit columns only - never password hashes or Firebase token
+  // material. Account deletion is deliberately NOT offered here: removing a
+  // profile mid-event can trap seats/leadership and break auth recovery, so
+  // deletion is an organizer-assisted, effects-reviewed decision.
+  app.get('/api/me/export', { preHandler: authenticate }, async (req: any) => {
+    await rateLimit(`export:${req.userId}`, 5, 60);
+    const [profile, memberships, requests, invites, feedback, impressions] = await Promise.all([
+      pool.query(
+        `SELECT id, display_name, email, email_verified_at, skills, timezone, utc_offset_minutes,
+                looking_for_team, created_at, last_active_at
+         FROM profiles WHERE id = $1`, [req.userId]),
+      pool.query(
+        `SELECT tm.team_id, tm.role, tm.joined_at, t.name AS team_name
+         FROM team_members tm JOIN teams t ON t.id = tm.team_id WHERE tm.user_id = $1`, [req.userId]),
+      pool.query(
+        `SELECT jr.id, jr.team_id, t.name AS team_name, jr.status, jr.created_at
+         FROM join_requests jr JOIN teams t ON t.id = jr.team_id WHERE jr.user_id = $1`, [req.userId]),
+      pool.query(
+        `SELECT ti.id, ti.team_id, t.name AS team_name, ti.status, ti.created_at
+         FROM team_invitations ti JOIN teams t ON t.id = ti.team_id WHERE ti.user_id = $1`, [req.userId]),
+      pool.query(
+        `SELECT candidate_id, useful, created_at FROM suggestion_feedback WHERE user_id = $1`, [req.userId]),
+      pool.query(
+        `SELECT count(*)::int AS serves_recorded,
+                count(*) FILTER (WHERE created_at > now() - interval '30 days')::int AS serves_last_30d
+         FROM suggestion_impressions WHERE user_id = $1 OR candidate_id = $1`, [req.userId]),
+    ]);
+    return {
+      exported_at: new Date().toISOString(),
+      profile: profile.rows[0] ?? null,
+      team_memberships: memberships.rows,
+      join_requests: requests.rows,
+      team_invitations: invites.rows,
+      suggestion_feedback: feedback.rows,
+      suggestion_impressions: impressions.rows[0],
+      retention_note: 'Audit-log entries about actions you took are kept for the life of the event (organizer export on request). Suggestion impressions self-prune after 30 days.',
+    };
+  });
+
   app.put('/api/me', { preHandler: authenticate }, async (req: any) => {
     const body = parse(profileSchema, req.body);
     await rateLimit(`profile:${req.userId}`, 20, 60);

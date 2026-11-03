@@ -92,6 +92,27 @@ export default function Profile() {
 
       <p className="text-xs text-slate-400">Saving takes you to the board, where you can find a team or start your own.</p>
 
+      <div className="rounded-xl border border-line bg-panel p-3 text-xs text-slate-400 space-y-2">
+        <p className="font-semibold text-slate-700">Your data and privacy</p>
+        <p>Your display name, skills and timezone are visible to other signed-in participants while you are shown on the board or in suggestions. Suggestions you are shown, and your useful/not-useful votes, are recorded with your account so ranking quality can be measured; only allowlisted organizers can see those records, as aggregate counts. Impressions are deleted after 30 days.</p>
+        <button type="button" className="text-accent hover:underline"
+          onClick={async () => {
+            try {
+              const data = await api('/api/me/export', { token });
+              const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = 'teamform-my-data.json';
+              a.click();
+              URL.revokeObjectURL(a.href);
+              toast('Your data export downloaded');
+            } catch (e: any) { toast(e.message, 'error'); }
+          }}>
+          Download everything stored about me (JSON)
+        </button>
+        <p>Account deletion is not self-serve: removing a profile mid-event can trap team seats and leadership. Ask an organizer if you need your account removed.</p>
+      </div>
+
       <button className="btn-primary" disabled={busy || !loaded}>Save</button>
     </form>
   );

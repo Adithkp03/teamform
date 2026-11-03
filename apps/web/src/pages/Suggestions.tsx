@@ -36,6 +36,7 @@ export default function Suggestions() {
       <p className="eyebrow">Made for your skill set</p><h1 className="page-heading">Suggested teammates</h1><p className="text-slate-400">Find a different perspective. Scores explain why each person might fit.</p>
       <p className="rounded-xl border border-line bg-white p-4 text-sm text-slate-400">Ranking: <code className="text-accent">{data.scoring}</code></p>
       <p className="text-xs text-slate-400">Scores are a transparent heuristic, not a proven predictor - we are validating them against real join outcomes and your votes. Telling us whether a suggestion was useful directly improves this check.</p>
+      <p className="text-xs text-slate-400">Being shown here is recorded with your account (as are your votes) so ranking quality can be measured; only allowlisted organizers see those records, as aggregate counts, and they are deleted after 30 days.</p>
       <ul className="grid gap-3 sm:grid-cols-2">
         {data.suggestions.map((s: any) => (
           <li key={s.id} className="card">
