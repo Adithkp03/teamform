@@ -28,11 +28,16 @@ Repo is PUBLIC: https://github.com/Adithkp03/teamform . Cursor pagination is imp
 
 Distinct CI board/mixed-read p95 pairs: `35f54a6` 74.13/206.47ms (**mixed threshold failed**); identical app `0d0b5aa` 23.06/36.20ms (passed); optimized `3868857` 40.62/47.28ms (passed). Source run URLs and full correction history: docs/load-test-report.md. Docs-only `d5c913e` load workflow also passed; its own metrics are not substituted with earlier values. Variability's cause is unproven. No causal speedup, repeatability or production-capacity claim. **Production p95 is unmeasured.** 10k stored users is not 10k concurrent users; board scenario is100 readers, mixed103 VUs.
 
+## Organizer operations and observability (3 Nov 2026)
+- **Organizer tooling** (`/api/organizer/*`, allowlist via `ORGANIZER_EMAILS`; unset = no organizers, fail closed): event settings with audited before/after + over-cap team report; audit search + CSV export across the whole event INCLUDING deleted teams (audit rows are never cascade-deleted; retention = event + 90 days, export-before-cleanup, see docs/operations.md); stuck-request resolution as cancel-with-audited-reason (force-accept deliberately absent: operators never override seat invariants); matching metrics from suggestion impressions + usefulness votes.
+- **Observability**: every request gets an `x-request-id` echoed to the client and stamped on error logs; `/api/metrics` exposes per-route request/error counts + latency histograms, DB pool occupancy (`waiting` = saturation signal) and live SSE client count; a scheduled GitHub Actions health monitor (15 min) pings production and emails on failure. Incident + recovery runbook: docs/operations.md.
+- **Matching validation**: suggestion serves are recorded as impressions; users vote useful/not per suggestion; the organizer endpoint reports serves, a join-within-7d upper-bound proxy, and vote splits, with the explicit contract that scores stay a transparent heuristic until post-event outcome data exists.
+
 ## Trade-offs
 Correctness enforced in the database (slower writes; the locked + unique-constraint paths are proven by the race test and chaos checker, not claimed beyond them). Poll mode: ~1s poll interval for flat DB cost. Board cache: bounded 1s staleness for a ~12x read-cost cut. Free tiers: cold starts and caps, disclosed.
 
 ## With one more week
-Enrollment + hackathon-scoped board, suggestion-score tuning against real acceptance data, client-facing rate-limit headers.
+Enrollment + multi-hackathon scoped board, outcome-calibrated suggestion scoring once feedback/acceptance data exists, client-facing rate-limit headers, log-drain alerting off the free tier.
 
 ## Session and token semantics (post-hardening, exact)
 

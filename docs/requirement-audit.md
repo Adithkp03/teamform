@@ -76,3 +76,26 @@ Test-path correction `2df081d` passed all four automatic workflows, without reru
 Production `/api/health` verified full `2df081ddce9d62c58d1ebeb4fa826abed93bbd2a`; actual production login pixels show the new light interface. Latest load is reported as a **pass conclusion**, not assigned any earlier run's numeric p95. Source public APIs and the actual GitHub run page were inspected. `8dc8713` E2E portability failure remains above.
 
 Revised private deliverables: `teamform-walkthrough-v8.mp4` (221.68seconds), `teamform-design-final-v4.pdf` (1page), `ps1-requirements-checklist-v9.pdf` (1page). These supersede older editions, which remain retained. Editable content snapshots live in docs/submission-revision-20261102/. Email and production-load gaps remain open.
+
+## Product-improvement revision (3 Nov 2026)
+
+Driven by an external product review of the delivered app. Each review point
+was verified against the CURRENT code before work: two points were already
+stale (server-side board search/filters across the whole board shipped in the
+2 Nov revision; the API suite was 120 tests, not 118). The real gaps found
+and closed:
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Organizer operations | DONE | `/api/organizer/*` behind a fail-closed email allowlist (`ORGANIZER_EMAILS`; unset = nobody): event settings with audited before/after + over-cap team report; audit search + CSV export across the event INCLUDING deleted teams (retention policy: event + 90 days, export before cleanup, docs/operations.md); stuck/disputed request resolution as cancel-with-audited-reason (force-accept deliberately absent - seat invariants are never operator-overridden); matching funnel endpoint. 7 API tests (organizer.test.ts) |
+| Production observability | DONE | `x-request-id` on every response + structured JSON error logs keyed by it; `/api/metrics` adds DB pool occupancy (`waiting` = saturation), live SSE client count, pool error count; scheduled 15-min GitHub Actions health monitor pings prod API + metrics + web and emails on failure (free-tier alerting; scheduled-run delay caveat documented); incident/recovery runbook in docs/operations.md |
+| Matching quality measurement | DONE (instrumentation) | suggestion serves recorded as impressions; per-suggestion useful/not votes (upsert, replay-safe); organizer funnel reports serves, join-within-7d upper-bound proxy (explicitly labelled: any team join, not suggestion-caused) and vote split; UI states scores are a transparent heuristic being validated |
+| Idempotency edge cases | DONE | response-loss replay returns the identical stored response with one effect; a stored 4xx replays after the race resolves (no silent re-execution); stale (>60s) in-flight key takeover runs the presumed-dead attempt; fresh in-flight = 409 retry signal. 4 tests (idempotency-recovery.test.ts) |
+| User journeys / edges | DONE | invite expiry: expired code 410 -> TTL fix -> rotate -> join works; leader departure mid-moderation: old leader instantly 403, new leader accepts; legacy signup -> verify link single-use -> forgot/reset revokes sessions + old password; action-token expiry enforced. 4 tests (journeys.test.ts) |
+| Mobile screen-reader | DONE | 390px axe pass; join/create controls visible and named at phone width; suggestion feedback votes are a named group with aria-pressed. 1 browser test (a11y.spec.ts) |
+
+Totals after this revision: 135 API tests (12 files) + 11 browser tests, all
+green locally on a fresh migration-only database. Optimistic-UI reconciliation
+was re-verified as already present (SSE `sync` forces full refetch; every
+conflict path refreshes server state and offers a recovery toast), so no
+change was needed there.

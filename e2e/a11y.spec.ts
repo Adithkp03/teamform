@@ -29,3 +29,36 @@ test('no serious/critical axe violations on any page', async ({ page }) => {
   await page.waitForLoadState('networkidle');
   await scan('suggestions');
 });
+
+// Mobile screen-reader pass at phone width: the board's join/create controls,
+// filters and the suggestion feedback votes must stay reachable and named.
+test('mobile 390px: controls stay accessible and named', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const scan = async (label: string) => {
+    const results = await new AxeBuilder({ page }).analyze();
+    const bad = results.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical');
+    expect(bad, `${label}: ${bad.map((v) => `${v.id} (${v.impact})`).join(', ')}`).toEqual([]);
+  };
+
+  await signup(page, 'Mobile SR User');
+  await page.goto('/board');
+  await page.waitForLoadState('networkidle');
+
+  // Primary actions remain present and named at phone width.
+  await expect(page.getByLabel('Team name')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create team' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Join with code' })).toBeVisible();
+  await scan('board@390');
+
+  await page.goto('/suggestions');
+  await page.waitForLoadState('networkidle');
+  await scan('suggestions@390');
+
+  // Feedback votes, when suggestions exist, are a named group with pressed state.
+  const group = page.getByRole('group', { name: /Was the suggestion/ });
+  if (await group.count()) {
+    await expect(group.first().getByRole('button', { name: 'Yes' })).toHaveAttribute('aria-pressed', 'false');
+    await group.first().getByRole('button', { name: 'Yes' }).click();
+    await expect(group.first().getByRole('button', { name: 'Yes' })).toHaveAttribute('aria-pressed', 'true');
+  }
+});

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { invalidateBoard } from './boardcache.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
@@ -8,11 +9,19 @@ import teamRoutes from './routes/teams.js';
 import boardRoutes from './routes/board.js';
 import suggestionRoutes from './routes/suggestions.js';
 import eventRoutes from './routes/events.js';
+import organizerRoutes from './routes/organizer.js';
 
 export function buildApp(opts: { logger?: boolean } = {}) {
-  const app = Fastify({ logger: opts.logger ?? false });
+  // Every request gets a stable id, echoed as x-request-id and attached to error
+  // logs, so a user report can be tied to one exact failing request.
+  const app = Fastify({ logger: opts.logger ?? false, genReqId: () => crypto.randomUUID() });
 
   app.register(cors, { origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : true });
+
+  app.addHook('onSend', (req, reply, payload, done) => {
+    reply.header('x-request-id', req.id);
+    done();
+  });
 
   app.addHook('onResponse', async (req, reply) => {
     record(req.routeOptions?.url ?? req.url, reply.statusCode, reply.elapsedTime);
@@ -48,7 +57,7 @@ export function buildApp(opts: { logger?: boolean } = {}) {
     if (typeof err?.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 500) {
       return reply.code(err.statusCode).send({ error: { code: 'bad_request', message: err.message } });
     }
-    console.error(err);
+    console.error(JSON.stringify({ level: 'error', msg: 'unhandled_error', request_id: req.id, route: req.routeOptions?.url ?? req.url, err: String(err?.stack ?? err) }));
     return reply.code(500).send({ error: { code: 'internal', message: 'Internal server error' } });
   });
 
@@ -57,6 +66,7 @@ export function buildApp(opts: { logger?: boolean } = {}) {
   app.register(boardRoutes);
   app.register(suggestionRoutes);
   app.register(eventRoutes);
+  app.register(organizerRoutes);
 
   return app;
 }

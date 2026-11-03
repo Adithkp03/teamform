@@ -39544,8 +39544,20 @@ var require_cors = __commonJS({
 var metrics_exports = {};
 __export(metrics_exports, {
   record: () => record,
+  recordPoolError: () => recordPoolError,
+  setPoolStats: () => setPoolStats,
+  setSseClients: () => setSseClients,
   snapshot: () => snapshot
 });
+function setSseClients(n) {
+  sseClients = n;
+}
+function recordPoolError() {
+  poolErrors++;
+}
+function setPoolStats(total, idle, waiting) {
+  poolStats = { total, idle, waiting };
+}
 function record(route, statusCode, durationMs) {
   let m = routes.get(route);
   if (!m) {
@@ -39558,7 +39570,12 @@ function record(route, statusCode, durationMs) {
   m.latency[idx === -1 ? buckets.length - 1 : idx]++;
 }
 function snapshot() {
-  const out = { uptime_seconds: Math.round((Date.now() - startedAt) / 1e3), routes: {} };
+  const out = {
+    uptime_seconds: Math.round((Date.now() - startedAt) / 1e3),
+    sse_clients: sseClients,
+    db_pool: { ...poolStats, errors: poolErrors },
+    routes: {}
+  };
   for (const [route, m] of routes) {
     out.routes[route] = {
       requests: m.requests,
@@ -39569,13 +39586,16 @@ function snapshot() {
   }
   return out;
 }
-var buckets, routes, startedAt;
+var buckets, routes, startedAt, sseClients, poolErrors, poolStats;
 var init_metrics = __esm({
   "src/metrics.ts"() {
     "use strict";
     buckets = [25, 50, 100, 200, 400, 1e3, Infinity];
     routes = /* @__PURE__ */ new Map();
     startedAt = Date.now();
+    sseClients = 0;
+    poolErrors = 0;
+    poolStats = { total: 0, idle: 0, waiting: 0 };
   }
 });
 
@@ -40912,7 +40932,7 @@ var require_cert_signatures = __commonJS({
 var require_sasl = __commonJS({
   "../../node_modules/pg/lib/crypto/sasl.js"(exports, module) {
     "use strict";
-    var crypto3 = require_utils4();
+    var crypto4 = require_utils4();
     var { signatureAlgorithmHashFromCertificate } = require_cert_signatures();
     function saslprep(password) {
       const nonAsciiSpace = /[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000]/g;
@@ -40930,7 +40950,7 @@ var require_sasl = __commonJS({
       if (mechanism === "SCRAM-SHA-256-PLUS" && typeof stream.getPeerCertificate !== "function") {
         throw new Error("SASL: Mechanism SCRAM-SHA-256-PLUS requires a certificate");
       }
-      const clientNonce = crypto3.randomBytes(18).toString("base64");
+      const clientNonce = crypto4.randomBytes(18).toString("base64");
       const gs2Header = mechanism === "SCRAM-SHA-256-PLUS" ? "p=tls-server-end-point" : stream ? "y" : "n";
       return {
         mechanism,
@@ -40972,20 +40992,20 @@ var require_sasl = __commonJS({
         const peerCert = stream.getPeerCertificate().raw;
         let hashName = signatureAlgorithmHashFromCertificate(peerCert);
         if (hashName === "MD5" || hashName === "SHA-1") hashName = "SHA-256";
-        const certHash = await crypto3.hashByName(hashName, peerCert);
+        const certHash = await crypto4.hashByName(hashName, peerCert);
         const bindingData = Buffer.concat([Buffer.from("p=tls-server-end-point,,"), Buffer.from(certHash)]);
         channelBinding = bindingData.toString("base64");
       }
       const clientFinalMessageWithoutProof = "c=" + channelBinding + ",r=" + sv.nonce;
       const authMessage = clientFirstMessageBare + "," + serverFirstMessage + "," + clientFinalMessageWithoutProof;
       const saltBytes = Buffer.from(sv.salt, "base64");
-      const saltedPassword = await crypto3.deriveKey(saslprep(password), saltBytes, sv.iteration);
-      const clientKey = await crypto3.hmacSha256(saltedPassword, "Client Key");
-      const storedKey = await crypto3.sha256(clientKey);
-      const clientSignature = await crypto3.hmacSha256(storedKey, authMessage);
+      const saltedPassword = await crypto4.deriveKey(saslprep(password), saltBytes, sv.iteration);
+      const clientKey = await crypto4.hmacSha256(saltedPassword, "Client Key");
+      const storedKey = await crypto4.sha256(clientKey);
+      const clientSignature = await crypto4.hmacSha256(storedKey, authMessage);
       const clientProof = xorBuffers(Buffer.from(clientKey), Buffer.from(clientSignature)).toString("base64");
-      const serverKey = await crypto3.hmacSha256(saltedPassword, "Server Key");
-      const serverSignatureBytes = await crypto3.hmacSha256(serverKey, authMessage);
+      const serverKey = await crypto4.hmacSha256(saltedPassword, "Server Key");
+      const serverSignatureBytes = await crypto4.hmacSha256(serverKey, authMessage);
       session.message = "SASLResponse";
       session.serverSignature = Buffer.from(serverSignatureBytes).toString("base64");
       session.response = clientFinalMessageWithoutProof + ",p=" + clientProof;
@@ -43224,7 +43244,7 @@ var require_client = __commonJS({
     var Query2 = require_query();
     var defaults2 = require_defaults2();
     var Connection2 = require_connection();
-    var crypto3 = require_utils4();
+    var crypto4 = require_utils4();
     var activeQueryDeprecationNotice = nodeUtils.deprecate(
       () => {
       },
@@ -43479,7 +43499,7 @@ var require_client = __commonJS({
       _handleAuthMD5Password(msg) {
         this._getPassword(async () => {
           try {
-            const hashedPassword = await crypto3.postgresMd5PasswordHash(this.user, this.password, msg.salt);
+            const hashedPassword = await crypto4.postgresMd5PasswordHash(this.user, this.password, msg.salt);
             this.connection.password(hashedPassword);
           } catch (e) {
             this.emit("error", e);
@@ -45198,14 +45218,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "../../node_modules/jwa/index.js"(exports, module) {
     var Buffer2 = require_safe_buffer().Buffer;
-    var crypto3 = __require("crypto");
+    var crypto4 = __require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util2 = __require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto3.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto4.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -45295,17 +45315,17 @@ var require_jwa = __commonJS({
       return function sign(thing, secret2) {
         checkIsSecretKey(secret2);
         thing = normalizeInput(thing);
-        var hmac = crypto3.createHmac("sha" + bits, secret2);
+        var hmac = crypto4.createHmac("sha" + bits, secret2);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto3 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto4 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto3.timingSafeEqual(a, b);
+      return crypto4.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -45322,7 +45342,7 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto3.createSign("RSA-SHA" + bits);
+        var signer = crypto4.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -45332,7 +45352,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto3.createVerify("RSA-SHA" + bits);
+        var verifier = crypto4.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -45341,11 +45361,11 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto3.createSign("RSA-SHA" + bits);
+        var signer = crypto4.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto3.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto3.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto4.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto4.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -45355,12 +45375,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto3.createVerify("RSA-SHA" + bits);
+        var verifier = crypto4.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto3.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto3.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto4.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto4.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -46824,6 +46844,9 @@ var require_jsonwebtoken = __commonJS({
     };
   }
 });
+
+// src/app.ts
+import crypto3 from "node:crypto";
 
 // src/boardcache.ts
 var TTL_MS = 1e3;
@@ -52694,6 +52717,7 @@ var defaults = import_lib.default.defaults;
 var esm_default = import_lib.default;
 
 // src/db.ts
+init_metrics();
 var { Pool: Pool2 } = esm_default;
 var dbUrl = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/teamform";
 var useSsl = /neon\.tech|sslmode=require/.test(dbUrl);
@@ -52705,6 +52729,9 @@ var pool = new Pool2({
   idleTimeoutMillis: 1e4,
   connectionTimeoutMillis: 5e3
 });
+pool.on("error", () => recordPoolError());
+setInterval(() => setPoolStats(pool.totalCount, pool.idleCount, pool.waitingCount), 5e3).unref();
+setPoolStats(pool.totalCount, pool.idleCount, pool.waitingCount);
 async function withTx(fn) {
   const client = await pool.connect();
   try {
@@ -52909,6 +52936,17 @@ async function consumeActionToken(token, kind) {
     [hashToken(token), kind]
   );
   return rows[0]?.user_id ?? null;
+}
+var organizerEmails = () => new Set(
+  (process.env.ORGANIZER_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean)
+);
+async function requireOrganizer(req, reply) {
+  await authenticate(req, reply);
+  const allowed = organizerEmails();
+  if (!allowed.size) throw errors.forbidden("No organizers are configured on this deployment");
+  const { rows } = await pool.query(`SELECT lower(email) AS email FROM profiles WHERE id = $1`, [req.userId]);
+  const email = rows[0]?.email;
+  if (!email || !allowed.has(email)) throw errors.forbidden("Organizer access required");
 }
 
 // src/firebase.ts
@@ -53893,14 +53931,35 @@ async function suggestionRoutes(app2) {
       else parts.push("in a different timezone");
       return { ...r, reason: parts.join("; ") };
     });
+    if (rows.length) {
+      const n = rows.length;
+      const values = rows.map((_, i) => `($1, $${i + 2}, $${i + 2 + n})`).join(",");
+      pool.query(
+        `INSERT INTO suggestion_impressions (user_id, candidate_id, score) VALUES ${values}`,
+        [req.userId, ...rows.map((r) => r.id), ...rows.map((r) => r.score)]
+      ).catch(() => {
+      });
+    }
     return {
       scoring: "score = 2*complementary_skills + 1*shared_skills + timezone_fit (same tz=2, within 2h=1, else 0)",
+      scoring_status: "transparent heuristic - being validated against real join outcomes and feedback",
       suggestions
     };
+  });
+  app2.post("/api/suggestions/feedback", { preHandler: authenticate }, async (req) => {
+    await rateLimit(`suggest_fb:${req.userId}`, 30, 60);
+    const body = parse(external_exports.object({ candidate_id: external_exports.string().uuid(), useful: external_exports.boolean() }), req.body);
+    await pool.query(
+      `INSERT INTO suggestion_feedback (user_id, candidate_id, useful) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, candidate_id) DO UPDATE SET useful = EXCLUDED.useful, updated_at = now()`,
+      [req.userId, body.candidate_id, body.useful]
+    );
+    return { ok: true };
   });
 }
 
 // src/routes/events.ts
+init_metrics();
 var MODE = process.env.REALTIME_MODE || "poll";
 var POLL_MS = Number(process.env.EVENTS_POLL_MS || 1e3);
 var MAX_STREAM_MS = Number(process.env.EVENTS_MAX_STREAM_MS || 28e4);
@@ -54018,6 +54077,7 @@ data: {"reason":"session_revoked"}
           }
           c.closed = true;
           clients.delete(c);
+          setSseClients(clients.size);
         }
         if (clients.size === 0) return;
       }
@@ -54124,6 +54184,7 @@ data: {"reason":"connected"}
     }
     const state = { userId, sessionId: req.sessionId, reply, cursor, closed: false };
     clients.add(state);
+    setSseClients(clients.size);
     const rotate = setTimeout(() => {
       if (state.closed) return;
       reply.raw.write(`id: ${state.cursor}
@@ -54142,6 +54203,7 @@ data: {"reason":"max_stream_age"}
     const cleanup = () => {
       state.closed = true;
       clients.delete(state);
+      setSseClients(clients.size);
       clearTimeout(rotate);
       clearInterval(heartbeat);
     };
@@ -54149,10 +54211,215 @@ data: {"reason":"max_stream_age"}
   });
 }
 
+// src/routes/organizer.ts
+var uuidParam2 = external_exports.string().uuid();
+var auditQuerySchema = external_exports.object({
+  action: external_exports.string().trim().max(80).optional(),
+  team_id: external_exports.string().uuid().optional(),
+  user_id: external_exports.string().uuid().optional(),
+  since: external_exports.string().datetime({ offset: true }).optional(),
+  until: external_exports.string().datetime({ offset: true }).optional(),
+  cursor: external_exports.coerce.number().int().positive().optional(),
+  limit: external_exports.coerce.number().int().min(1).max(500).default(100)
+});
+function auditWhere(q) {
+  const clauses = [
+    `($1::text IS NULL OR a.action = $1)`,
+    `($2::uuid IS NULL OR a.team_id = $2)`,
+    `($3::uuid IS NULL OR a.actor_id = $3 OR a.metadata->>'user_id' = $3::text)`,
+    `($4::timestamptz IS NULL OR a.created_at >= $4)`,
+    `($5::timestamptz IS NULL OR a.created_at <= $5)`,
+    `($6::bigint IS NULL OR a.id < $6)`
+  ];
+  const params = [q.action ?? null, q.team_id ?? null, q.user_id ?? null, q.since ?? null, q.until ?? null, q.cursor ?? null];
+  return { where: clauses.join(" AND "), params };
+}
+var AUDIT_SELECT = `
+  SELECT a.id, a.action, a.created_at, a.team_id, a.metadata,
+         ap.display_name AS actor_name, tp.name AS team_name,
+         sp.display_name AS subject_name
+  FROM audit_log a
+  LEFT JOIN profiles ap ON ap.id = a.actor_id
+  LEFT JOIN teams tp ON tp.id = a.team_id
+  LEFT JOIN profiles sp ON sp.id = NULLIF(a.metadata->>'user_id', '')::uuid`;
+var eventSettingsSchema = external_exports.object({
+  name: external_exports.string().trim().min(1).max(120).optional(),
+  team_size_min: external_exports.number().int().min(1).max(20).optional(),
+  team_size_max: external_exports.number().int().min(1).max(50).optional(),
+  invite_code_ttl_minutes: external_exports.number().int().min(10).max(43200).optional()
+}).refine((v) => Object.keys(v).length > 0, { message: "At least one setting is required" });
+async function organizerRoutes(app2) {
+  const pre = { preHandler: requireOrganizer };
+  async function currentHackathon2() {
+    const { rows } = await pool.query(`SELECT * FROM hackathons ORDER BY created_at DESC LIMIT 1`);
+    if (!rows.length) throw errors.notFound("No hackathon configured");
+    return rows[0];
+  }
+  app2.get("/api/organizer/overview", pre, async (req) => {
+    await rateLimit(`org:${req.userId}`, 60, 60);
+    const h = await currentHackathon2();
+    const { rows } = await pool.query(
+      `SELECT
+         (SELECT count(*)::int FROM profiles WHERE NOT is_seed) AS participants,
+         (SELECT count(*)::int FROM profiles WHERE is_seed) AS seed_profiles,
+         (SELECT count(*)::int FROM teams WHERE hackathon_id = $1) AS teams,
+         (SELECT count(*)::int FROM teams WHERE hackathon_id = $1 AND looking_for_members) AS teams_looking,
+         (SELECT count(*)::int FROM team_members WHERE hackathon_id = $1) AS memberships,
+         (SELECT count(*)::int FROM join_requests WHERE hackathon_id = $1 AND status = 'pending') AS pending_requests,
+         (SELECT count(*)::int FROM join_requests WHERE hackathon_id = $1 AND status = 'pending' AND created_at < now() - interval '24 hours') AS stuck_requests_24h,
+         (SELECT count(*)::int FROM audit_log WHERE hackathon_id = $1 OR hackathon_id IS NULL) AS audit_rows`,
+      [h.id]
+    );
+    return { event: { slug: h.slug, name: h.name, team_size_min: h.team_size_min, team_size_max: h.team_size_max, invite_code_ttl_minutes: h.invite_code_ttl_minutes }, ...rows[0] };
+  });
+  app2.get("/api/organizer/event", pre, async () => {
+    const h = await currentHackathon2();
+    return { event: h };
+  });
+  app2.put("/api/organizer/event", pre, async (req) => {
+    await rateLimit(`org:${req.userId}`, 20, 60);
+    const body = parse(eventSettingsSchema, req.body);
+    return withTx(async (c) => {
+      const { rows } = await c.query(`SELECT * FROM hackathons ORDER BY created_at DESC LIMIT 1 FOR UPDATE`);
+      if (!rows.length) throw errors.notFound("No hackathon configured");
+      const before = rows[0];
+      const nextMin = body.team_size_min ?? before.team_size_min;
+      const nextMax = body.team_size_max ?? before.team_size_max;
+      if (nextMax < nextMin) throw errors.badRequest("team_size_max must be >= team_size_min");
+      const updated = await c.query(
+        `UPDATE hackathons SET name = $2, team_size_min = $3, team_size_max = $4, invite_code_ttl_minutes = $5
+         WHERE id = $1 RETURNING *`,
+        [before.id, body.name ?? before.name, nextMin, nextMax, body.invite_code_ttl_minutes ?? before.invite_code_ttl_minutes]
+      );
+      const over = await c.query(
+        `SELECT count(*)::int AS n FROM teams WHERE hackathon_id = $1 AND member_count > $2`,
+        [before.id, nextMax]
+      );
+      await c.query(
+        `INSERT INTO audit_log (hackathon_id, actor_id, action, metadata) VALUES ($1, $2, 'event_settings_updated', $3)`,
+        [before.id, req.userId, JSON.stringify({
+          before: { name: before.name, team_size_min: before.team_size_min, team_size_max: before.team_size_max, invite_code_ttl_minutes: before.invite_code_ttl_minutes },
+          after: { name: updated.rows[0].name, team_size_min: nextMin, team_size_max: nextMax, invite_code_ttl_minutes: updated.rows[0].invite_code_ttl_minutes },
+          teams_over_max: over.rows[0].n
+        })]
+      );
+      return { event: updated.rows[0], teams_over_max: over.rows[0].n };
+    });
+  });
+  app2.get("/api/organizer/audit", pre, async (req) => {
+    await rateLimit(`org:${req.userId}`, 60, 60);
+    const q = parse(auditQuerySchema, req.query ?? {});
+    const { where, params } = auditWhere(q);
+    const { rows } = await pool.query(
+      `${AUDIT_SELECT} WHERE ${where} ORDER BY a.id DESC LIMIT $7`,
+      [...params, q.limit]
+    );
+    const last = rows[rows.length - 1];
+    return { audit: rows, next_cursor: rows.length === q.limit && last ? last.id : null };
+  });
+  app2.get("/api/organizer/audit/export", pre, async (req, reply) => {
+    await rateLimit(`org:${req.userId}`, 10, 60);
+    const q = parse(auditQuerySchema.omit({ cursor: true }).extend({ limit: external_exports.coerce.number().int().min(1).max(1e4).default(1e4) }), req.query ?? {});
+    const { where, params } = auditWhere({ ...q, cursor: void 0 });
+    const { rows } = await pool.query(
+      `${AUDIT_SELECT} WHERE ${where} ORDER BY a.id DESC LIMIT $7`,
+      [...params, q.limit]
+    );
+    const esc = (v) => {
+      const s = v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = "id,created_at,action,actor_name,subject_name,team_name,team_id,metadata";
+    const lines = rows.map((r) => [r.id, new Date(r.created_at).toISOString(), r.action, r.actor_name, r.subject_name, r.team_name, r.team_id, r.metadata].map(esc).join(","));
+    reply.header("content-type", "text/csv; charset=utf-8");
+    reply.header("content-disposition", `attachment; filename="teamform-audit-${Date.now()}.csv"`);
+    return [header, ...lines].join("\n") + "\n";
+  });
+  app2.get("/api/organizer/requests/stuck", pre, async (req) => {
+    await rateLimit(`org:${req.userId}`, 60, 60);
+    const q = parse(external_exports.object({ older_than_hours: external_exports.coerce.number().min(1).max(720).default(24), limit: external_exports.coerce.number().int().min(1).max(500).default(100) }), req.query ?? {});
+    const { rows } = await pool.query(
+      `SELECT jr.id, jr.created_at, jr.message, jr.status,
+              p.display_name AS requester_name, p.email AS requester_email,
+              t.name AS team_name, t.id AS team_id, t.member_count,
+              lp.display_name AS leader_name
+       FROM join_requests jr
+       JOIN profiles p ON p.id = jr.user_id
+       JOIN teams t ON t.id = jr.team_id
+       JOIN profiles lp ON lp.id = t.leader_id
+       WHERE jr.status = 'pending' AND jr.created_at < now() - make_interval(hours => $1::int)
+       ORDER BY jr.created_at ASC LIMIT $2`,
+      [q.older_than_hours, q.limit]
+    );
+    return { stuck: rows, older_than_hours: q.older_than_hours };
+  });
+  app2.post("/api/organizer/requests/:id/resolve", pre, async (req) => {
+    await rateLimit(`org:${req.userId}`, 30, 60);
+    parse(uuidParam2, req.params.id);
+    const body = parse(external_exports.object({ reason: external_exports.string().trim().min(1).max(300) }), req.body);
+    return withTx(async (c) => {
+      const { rows } = await c.query(
+        `SELECT jr.*, t.name AS team_name FROM join_requests jr JOIN teams t ON t.id = jr.team_id
+         WHERE jr.id = $1 FOR UPDATE OF jr`,
+        [req.params.id]
+      );
+      const jr = rows[0];
+      if (!jr) throw errors.notFound("Request not found");
+      if (jr.status !== "pending") throw errors.conflict("request_already_decided", `Request is already ${jr.status}`);
+      await c.query(
+        `UPDATE join_requests SET status = 'cancelled', decided_at = now(), decided_by = $2 WHERE id = $1`,
+        [jr.id, req.userId]
+      );
+      await c.query(
+        `INSERT INTO audit_log (hackathon_id, team_id, actor_id, action, metadata) VALUES ($1, $2, $3, 'organizer_request_cancelled', $4)`,
+        [jr.hackathon_id, jr.team_id, req.userId, JSON.stringify({ request_id: jr.id, user_id: jr.user_id, reason: body.reason, team_name: jr.team_name })]
+      );
+      return { ok: true, request_id: jr.id, status: "cancelled" };
+    });
+  });
+  app2.get("/api/organizer/matching", pre, async (req) => {
+    await rateLimit(`org:${req.userId}`, 30, 60);
+    const { rows } = await pool.query(
+      `WITH first_impressions AS (
+         SELECT DISTINCT ON (user_id, candidate_id) user_id, candidate_id, created_at
+         FROM suggestion_impressions ORDER BY user_id, candidate_id, created_at
+       ),
+       outcomes AS (
+         SELECT fi.user_id, fi.candidate_id,
+           EXISTS (
+             SELECT 1 FROM team_members tm
+             WHERE tm.user_id = fi.candidate_id
+               AND tm.joined_at BETWEEN fi.created_at AND fi.created_at + interval '7 days'
+           ) AS joined_within_7d
+         FROM first_impressions fi
+       )
+       SELECT
+         (SELECT count(*)::int FROM suggestion_impressions) AS impressions,
+         (SELECT count(DISTINCT user_id)::int FROM suggestion_impressions) AS users_served,
+         (SELECT count(DISTINCT candidate_id)::int FROM suggestion_impressions) AS candidates_served,
+         (SELECT count(*)::int FROM outcomes) AS unique_pairs,
+         (SELECT count(*)::int FROM outcomes WHERE joined_within_7d) AS candidate_joined_within_7d,
+         (SELECT count(*)::int FROM suggestion_feedback) AS feedback_votes,
+         (SELECT count(*)::int FROM suggestion_feedback WHERE useful) AS feedback_useful`
+    );
+    return {
+      ...rows[0],
+      // Honesty contract: the join-within-7d proxy credits ANY team join, not
+      // a join caused by the suggestion. Treat both numbers as directional
+      // until post-event feedback (acceptance, team satisfaction) exists.
+      note: "Heuristic validation in progress: join_within_7d is an upper-bound proxy (any team join, not suggestion-caused); present scores as a transparent heuristic until post-event outcome data exists."
+    };
+  });
+}
+
 // src/app.ts
 function buildApp(opts = {}) {
-  const app2 = (0, import_fastify.default)({ logger: opts.logger ?? false });
+  const app2 = (0, import_fastify.default)({ logger: opts.logger ?? false, genReqId: () => crypto3.randomUUID() });
   app2.register(import_cors.default, { origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(",") : true });
+  app2.addHook("onSend", (req, reply, payload, done) => {
+    reply.header("x-request-id", req.id);
+    done();
+  });
   app2.addHook("onResponse", async (req, reply) => {
     record(req.routeOptions?.url ?? req.url, reply.statusCode, reply.elapsedTime);
   });
@@ -54175,7 +54442,7 @@ function buildApp(opts = {}) {
     if (typeof err?.statusCode === "number" && err.statusCode >= 400 && err.statusCode < 500) {
       return reply.code(err.statusCode).send({ error: { code: "bad_request", message: err.message } });
     }
-    console.error(err);
+    console.error(JSON.stringify({ level: "error", msg: "unhandled_error", request_id: req.id, route: req.routeOptions?.url ?? req.url, err: String(err?.stack ?? err) }));
     return reply.code(500).send({ error: { code: "internal", message: "Internal server error" } });
   });
   app2.register(authRoutes);
@@ -54183,6 +54450,7 @@ function buildApp(opts = {}) {
   app2.register(boardRoutes);
   app2.register(suggestionRoutes);
   app2.register(eventRoutes);
+  app2.register(organizerRoutes);
   return app2;
 }
 

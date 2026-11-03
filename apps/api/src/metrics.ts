@@ -12,6 +12,15 @@ interface RouteMetrics {
 const routes = new Map<string, RouteMetrics>();
 const startedAt = Date.now();
 
+// Live gauges, wired from db.ts (pool) and routes/events.ts (SSE clients).
+let sseClients = 0;
+let poolErrors = 0;
+let poolStats: { total: number; idle: number; waiting: number } = { total: 0, idle: 0, waiting: 0 };
+
+export function setSseClients(n: number) { sseClients = n; }
+export function recordPoolError() { poolErrors++; }
+export function setPoolStats(total: number, idle: number, waiting: number) { poolStats = { total, idle, waiting }; }
+
 export function record(route: string, statusCode: number, durationMs: number) {
   let m = routes.get(route);
   if (!m) {
@@ -25,7 +34,12 @@ export function record(route: string, statusCode: number, durationMs: number) {
 }
 
 export function snapshot() {
-  const out: Record<string, unknown> = { uptime_seconds: Math.round((Date.now() - startedAt) / 1000), routes: {} };
+  const out: Record<string, unknown> = {
+    uptime_seconds: Math.round((Date.now() - startedAt) / 1000),
+    sse_clients: sseClients,
+    db_pool: { ...poolStats, errors: poolErrors },
+    routes: {},
+  };
   for (const [route, m] of routes) {
     (out.routes as any)[route] = {
       requests: m.requests,

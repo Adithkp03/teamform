@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { pool } from '../db.js';
 import { authenticate } from '../auth.js';
 import { rateLimit } from '../ratelimit.js';
+import { parse } from '../util.js';
 
 /**
  * Teammate suggestions, ranked by an explained score:
@@ -48,9 +50,36 @@ export default async function suggestionRoutes(app: FastifyInstance) {
       else parts.push('in a different timezone');
       return { ...r, reason: parts.join('; ') };
     });
+    // Instrumentation for matching-quality validation (review-driven):
+    // record what was served so organizers can measure real outcomes
+    // (candidate joins a team, direct usefulness votes) instead of trusting
+    // the heuristic blind. Fire-and-forget: analytics must never break the
+    // endpoint, and never slows the response beyond one batch insert.
+    if (rows.length) {
+      const n = rows.length;
+      const values = rows.map((_: any, i: number) => `($1, $${i + 2}, $${i + 2 + n})`).join(',');
+      pool.query(
+        `INSERT INTO suggestion_impressions (user_id, candidate_id, score) VALUES ${values}`,
+        [req.userId, ...rows.map((r: any) => r.id), ...rows.map((r: any) => r.score)],
+      ).catch(() => {});
+    }
     return {
       scoring: 'score = 2*complementary_skills + 1*shared_skills + timezone_fit (same tz=2, within 2h=1, else 0)',
+      scoring_status: 'transparent heuristic - being validated against real join outcomes and feedback',
       suggestions,
     };
+  });
+
+  // Direct usefulness vote on a served suggestion. One vote per
+  // (user, candidate); voting again updates it. Upsert makes replays safe.
+  app.post('/api/suggestions/feedback', { preHandler: authenticate }, async (req: any) => {
+    await rateLimit(`suggest_fb:${req.userId}`, 30, 60);
+    const body = parse(z.object({ candidate_id: z.string().uuid(), useful: z.boolean() }), req.body);
+    await pool.query(
+      `INSERT INTO suggestion_feedback (user_id, candidate_id, useful) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, candidate_id) DO UPDATE SET useful = EXCLUDED.useful, updated_at = now()`,
+      [req.userId, body.candidate_id, body.useful],
+    );
+    return { ok: true };
   });
 }

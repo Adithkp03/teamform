@@ -7,11 +7,23 @@ export default function Suggestions() {
   const { token } = useAuth();
   const toast = useToast();
   const [data, setData] = useState<any>(null);
+  const [votes, setVotes] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     localStorage.setItem('tf_seen_suggestions', '1');
     api('/api/suggestions', { token }).then(setData).catch((e) => toast(e.message, 'error'));
   }, [token]);
+
+  async function vote(candidateId: string, useful: boolean) {
+    // One vote per suggestion; voting again changes it. Server upserts.
+    setVotes((v) => ({ ...v, [candidateId]: useful }));
+    try {
+      await api('/api/suggestions/feedback', { method: 'POST', token, body: { candidate_id: candidateId, useful } });
+    } catch (e: any) {
+      setVotes((v) => { const n = { ...v }; delete n[candidateId]; return n; });
+      toast(e.message, 'error');
+    }
+  }
 
   if (!data) return <p className="text-slate-400">Loading suggestions...</p>;
 
@@ -19,6 +31,7 @@ export default function Suggestions() {
     <div className="space-y-4">
       <p className="eyebrow">Made for your skill set</p><h1 className="page-heading">Suggested teammates</h1><p className="text-slate-400">Find a different perspective. Scores explain why each person might fit.</p>
       <p className="rounded-xl border border-line bg-white p-4 text-sm text-slate-400">Ranking: <code className="text-accent">{data.scoring}</code></p>
+      <p className="text-xs text-slate-400">Scores are a transparent heuristic, not a proven predictor - we are validating them against real join outcomes and your votes. Telling us whether a suggestion was useful directly improves this check.</p>
       <ul className="grid gap-3 sm:grid-cols-2">
         {data.suggestions.map((s: any) => (
           <li key={s.id} className="card">
@@ -47,6 +60,22 @@ export default function Suggestions() {
               <div><dt>Shared skills</dt><dd>{s.shared_skills} x1</dd></div>
               <div><dt>Timezone fit</dt><dd>{s.timezone_fit}</dd></div>
             </dl>
+            <div className="mt-3 flex items-center gap-2 border-t border-line pt-2" role="group" aria-label={`Was the suggestion ${s.display_name} useful?`}>
+              <span className="text-xs text-slate-400">Useful?</span>
+              <button
+                type="button"
+                aria-pressed={votes[s.id] === true}
+                onClick={() => vote(s.id, true)}
+                className={`badge ${votes[s.id] === true ? 'border-accent/50 text-accent' : ''}`}
+              >Yes</button>
+              <button
+                type="button"
+                aria-pressed={votes[s.id] === false}
+                onClick={() => vote(s.id, false)}
+                className={`badge ${votes[s.id] === false ? 'border-accent/50 text-accent' : ''}`}
+              >No</button>
+              {votes[s.id] !== undefined && <span className="text-xs text-slate-400">Thanks - recorded.</span>}
+            </div>
           </li>
         ))}
       </ul>

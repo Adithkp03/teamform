@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { recordPoolError, setPoolStats } from './metrics.js';
 
 const { Pool } = pg;
 
@@ -14,6 +15,12 @@ export const pool = new Pool({
   idleTimeoutMillis: 10_000,
   connectionTimeoutMillis: 5_000,
 });
+
+pool.on('error', () => recordPoolError());
+// Cheap self-telemetry: pool occupancy is visible in /api/metrics so pool
+// exhaustion (the classic serverless failure mode) is diagnosable live.
+setInterval(() => setPoolStats(pool.totalCount, pool.idleCount, pool.waitingCount), 5_000).unref();
+setPoolStats(pool.totalCount, pool.idleCount, pool.waitingCount);
 
 export type TxClient = pg.PoolClient;
 

@@ -19,7 +19,7 @@ export function migrate() {
 
 export async function resetDb(opts: { min?: number; max?: number } = {}) {
   await pool.query(
-    `TRUNCATE join_requests, team_members, teams, profiles, idempotency_keys, audit_log, rate_limits, hackathons, domain_events, auth_refresh_tokens, auth_action_tokens RESTART IDENTITY CASCADE`,
+    `TRUNCATE join_requests, team_members, teams, profiles, idempotency_keys, audit_log, rate_limits, hackathons, domain_events, auth_refresh_tokens, auth_action_tokens, suggestion_impressions, suggestion_feedback RESTART IDENTITY CASCADE`,
   );
   await pool.query(
     `INSERT INTO hackathons (slug, name, team_size_min, team_size_max) VALUES ('ps1', 'Test Hackathon', $1, $2)`,
@@ -32,6 +32,16 @@ export async function makeUser(name = 'User', skills: string[] = [], utcOffset =
   await pool.query(
     `INSERT INTO profiles (id, display_name, skills, utc_offset_minutes) VALUES ($1, $2, $3, $4)`,
     [id, name, skills, utcOffset],
+  );
+  return { id, token: signToken(id) };
+}
+
+/** User with an email address (needed by the organizer allowlist check). */
+export async function makeEmailUser(name: string, email: string) {
+  const id = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO profiles (id, display_name, email) VALUES ($1, $2, $3)`,
+    [id, name, email.toLowerCase()],
   );
   return { id, token: signToken(id) };
 }

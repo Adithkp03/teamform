@@ -231,3 +231,29 @@ export async function consumeActionToken(token: string, kind: 'reset' | 'verify'
   );
   return rows[0]?.user_id ?? null;
 }
+
+// ---------------------------------------------------------------------------
+// Organizer authorization.
+// An explicit allowlist of profile emails in ORGANIZER_EMAILS (comma-
+// separated). Empty or unset = NO organizers at all (fail closed): the
+// operations endpoints simply 403. Organizer powers are operations tooling:
+// audit search/export, stuck-request resolution, event settings, matching
+// metrics. Nothing here can impersonate a user or bypass team invariants.
+// ---------------------------------------------------------------------------
+const organizerEmails = () =>
+  new Set(
+    (process.env.ORGANIZER_EMAILS ?? '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+/** Fastify preHandler: authenticate + require the caller's profile email in ORGANIZER_EMAILS. */
+export async function requireOrganizer(req: any, reply: any) {
+  await authenticate(req, reply);
+  const allowed = organizerEmails();
+  if (!allowed.size) throw errors.forbidden('No organizers are configured on this deployment');
+  const { rows } = await pool.query(`SELECT lower(email) AS email FROM profiles WHERE id = $1`, [req.userId]);
+  const email = rows[0]?.email as string | undefined;
+  if (!email || !allowed.has(email)) throw errors.forbidden('Organizer access required');
+}

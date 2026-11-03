@@ -3,6 +3,7 @@ import pg from 'pg';
 import { authenticate, isSessionValid } from '../auth.js';
 import { pool } from '../db.js';
 import { rateLimit } from '../ratelimit.js';
+import { setSseClients } from '../metrics.js';
 
 /**
  * Server-sent events, two modes (REALTIME_MODE env, default 'poll'):
@@ -144,6 +145,7 @@ export default async function eventRoutes(app: FastifyInstance) {
           try { c.reply.raw.write(`event: sync\ndata: {"reason":"session_revoked"}\n\n`); c.reply.raw.end(); } catch { /* already gone */ }
           c.closed = true;
           clients.delete(c);
+          setSseClients(clients.size);
         }
         if (clients.size === 0) return;
       }
@@ -243,6 +245,7 @@ export default async function eventRoutes(app: FastifyInstance) {
 
     const state: SseClient = { userId, sessionId: req.sessionId as string | undefined, reply, cursor, closed: false };
     clients.add(state);
+    setSseClients(clients.size);
 
     const rotate = setTimeout(() => {
       if (state.closed) return;
@@ -257,6 +260,7 @@ export default async function eventRoutes(app: FastifyInstance) {
     const cleanup = () => {
       state.closed = true;
       clients.delete(state);
+      setSseClients(clients.size);
       clearTimeout(rotate);
       clearInterval(heartbeat);
     };
