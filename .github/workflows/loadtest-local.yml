@@ -57,6 +57,13 @@ jobs:
             sleep 10
           done
           wait $K6PID
+      - name: 'Board endpoint: warm rerun (cold vs warm comparison)'
+        run: |
+          set -o pipefail
+          # Same run again immediately after the cold pass: warm connection
+          # pools, warmed query plans and OS caches. Cold vs warm p95/p99 is
+          # reported in the job summary.
+          k6 run --quiet -e BASE_URL=http://localhost:3000 -e "TOKEN=$TOKEN" --summary-export loadtest/ci-k6-warm-summary.json loadtest/board.k6.js | tee k6-warm-output.txt
       - name: "Mixed workload - 99 readers + paced team mutation churn"
         run: |
           set -o pipefail
@@ -71,18 +78,25 @@ jobs:
         if: always()
         run: |
           node -e '
-            try {
-              const m = require("./loadtest/ci-k6-summary.json").metrics;
-              const rows = [
+            const boardRows = (label, file) => {
+              const m = require(file).metrics;
+              return [
+                ["run", label],
+                ["p50", m.http_req_duration?.["p(50)"] + "ms"],
                 ["p95", m.http_req_duration?.["p(95)"] + "ms"],
-                ["p90", m.http_req_duration?.["p(90)"] + "ms"],
+                ["p99", m.http_req_duration?.["p(99)"] + "ms"],
                 ["avg", m.http_req_duration?.avg + "ms"],
                 ["max", m.http_req_duration?.max + "ms"],
                 ["requests", m.http_reqs?.count],
+                ["failed_requests", m.http_req_failed?.fails ?? Math.round((m.http_req_failed?.value ?? 0) * (m.http_reqs?.count ?? 0))],
                 ["failed_req_rate", ((m.http_req_failed?.value ?? 0) * 100).toFixed(3) + "%"],
               ];
-              const lines = ["## k6 board load result (CI stack, 100 VUs / 60s, full seed)", "", "| metric | value |", "|---|---|",
-                ...rows.map(r => "| " + r[0] + " | " + r[1] + " |")];
+            };
+            try {
+              const cold = boardRows("cold (first pass after fresh seed + API boot)", "./loadtest/ci-k6-summary.json");
+              const warm = boardRows("warm (immediate rerun)", "./loadtest/ci-k6-warm-summary.json");
+              const lines = ["## k6 board load result (CI stack, 100 VUs / 60s, full seed: 10,000 users / 2,000 teams)", "", "| metric | cold | warm |", "|---|---|---|",
+                ...cold.map((r, i) => "| " + r[0] + " | " + r[1] + " | " + warm[i][1] + " |")];
               require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
             } catch (e) {
               require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, "## k6 summary parse failed\n```\n" + e.message + "\n```\n");
@@ -91,8 +105,9 @@ jobs:
               const m = require("./loadtest/ci-k6-mix-summary.json").metrics;
               const board = m["http_req_duration{name:GET /api/board}"] ?? {};
               const rows = [
+                ["read p50", board["p(50)"] + "ms"],
                 ["read p95", board["p(95)"] + "ms"],
-                ["read p90", board["p(90)"] + "ms"],
+                ["read p99", board["p(99)"] + "ms"],
                 ["requests", m.http_reqs?.count],
                 ["failed_req_rate", ((m.http_req_failed?.value ?? 0) * 100).toFixed(3) + "%"],
                 ["checks", m.checks ? m.checks.passes + "/" + (m.checks.passes + m.checks.fails) : "?"],
@@ -125,6 +140,8 @@ jobs:
           path: |
             loadtest/ci-k6-summary.json
             k6-output.txt
+            loadtest/ci-k6-warm-summary.json
+            k6-warm-output.txt
             ci-profile.txt
             loadtest/ci-k6-mix-summary.json
             k6-mix-output.txt

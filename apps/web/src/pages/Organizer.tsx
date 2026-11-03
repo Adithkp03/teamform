@@ -212,7 +212,10 @@ export default function Organizer() {
         {audit && auditCursor && (
           <button className="btn-ghost" type="button" onClick={loadMoreAudit}>Load more audit rows</button>
         )}
-        <p className="text-xs text-slate-400">The trail survives team deletion. Retention: keep for the event + 90 days, export before any manual cleanup (docs/operations.md).</p>
+        <p className="text-xs text-slate-400">The trail survives team deletion. Retention: keep for the event + 90 days, export before any manual cleanup (docs/operations.md).{' '}
+          Last retention sweep: {overview.last_swept_at
+            ? `${new Date(overview.last_swept_at).toLocaleString()} (${Math.max(0, Math.round((Date.now() - new Date(overview.last_swept_at).getTime()) / 86400000))} days ago)`
+            : 'never'}.</p>
       </section>
 
       <section aria-label="Matching quality" className="card space-y-2">
@@ -220,7 +223,7 @@ export default function Organizer() {
         <p className="text-sm text-slate-700">
           {matching.impressions} suggestions served to {matching.users_served} participants ({matching.candidates_served} candidates).{' '}
           {matching.feedback_votes} usefulness votes, {matching.feedback_useful} positive.{' '}
-          {matching.unique_pairs > 0 ? `${Math.round((100 * matching.candidate_joined_within_7d) / matching.unique_pairs)}% of served candidates joined a team within 7 days.` : ''}
+          {matching.unique_pairs > 0 ? `${matching.pair_formed_within_7d} of ${matching.unique_pairs} served pairs (${Math.round((100 * matching.pair_formed_within_7d) / matching.unique_pairs)}%) provably formed the same team within 7 days of the impression.` : ''}
         </p>
         <p className="text-xs text-slate-400">{matching.note}</p>
       </section>

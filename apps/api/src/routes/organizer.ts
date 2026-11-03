@@ -88,7 +88,8 @@ export default async function organizerRoutes(app: FastifyInstance) {
          (SELECT count(*)::int FROM team_members WHERE hackathon_id = $1) AS memberships,
          (SELECT count(*)::int FROM join_requests WHERE hackathon_id = $1 AND status = 'pending') AS pending_requests,
          (SELECT count(*)::int FROM join_requests WHERE hackathon_id = $1 AND status = 'pending' AND created_at < now() - interval '24 hours') AS stuck_requests_24h,
-         (SELECT count(*)::int FROM audit_log WHERE hackathon_id = $1 OR hackathon_id IS NULL) AS audit_rows`,
+         (SELECT count(*)::int FROM audit_log WHERE hackathon_id = $1 OR hackathon_id IS NULL) AS audit_rows,
+         (SELECT max(created_at) FROM audit_log WHERE action = 'retention_sweep') AS last_swept_at`,
       [h.id],
     );
     return { event: { slug: h.slug, name: h.name, team_size_min: h.team_size_min, team_size_max: h.team_size_max, invite_code_ttl_minutes: h.invite_code_ttl_minutes }, ...rows[0] };
@@ -223,13 +224,25 @@ export default async function organizerRoutes(app: FastifyInstance) {
          SELECT DISTINCT ON (user_id, candidate_id) user_id, candidate_id, created_at
          FROM suggestion_impressions ORDER BY user_id, candidate_id, created_at
        ),
+       -- Audit-derived join moments. team_members rows are deleted on leave,
+       -- so current membership can never prove historic pair formation; the
+       -- audit trail survives leaves and deletions and carries the event
+       -- timestamps. member_joined via join_request names the joiner in
+       -- metadata.user_id (the actor is the accepting leader).
+       join_events AS (
+         SELECT COALESCE(NULLIF(metadata->>'user_id', '')::uuid, actor_id) AS user_id,
+                team_id, created_at
+         FROM audit_log
+         WHERE action IN ('team_created', 'member_joined') AND team_id IS NOT NULL
+       ),
        outcomes AS (
          SELECT fi.user_id, fi.candidate_id,
            EXISTS (
-             SELECT 1 FROM team_members tm
-             WHERE tm.user_id = fi.candidate_id
-               AND tm.joined_at BETWEEN fi.created_at AND fi.created_at + interval '7 days'
-           ) AS joined_within_7d
+             SELECT 1 FROM join_events a JOIN join_events b ON a.team_id = b.team_id
+             WHERE a.user_id = fi.user_id AND b.user_id = fi.candidate_id
+               AND a.created_at BETWEEN fi.created_at AND fi.created_at + interval '7 days'
+               AND b.created_at BETWEEN fi.created_at AND fi.created_at + interval '7 days'
+           ) AS pair_formed_within_7d
          FROM first_impressions fi
        )
        SELECT
@@ -237,16 +250,19 @@ export default async function organizerRoutes(app: FastifyInstance) {
          (SELECT count(DISTINCT user_id)::int FROM suggestion_impressions) AS users_served,
          (SELECT count(DISTINCT candidate_id)::int FROM suggestion_impressions) AS candidates_served,
          (SELECT count(*)::int FROM outcomes) AS unique_pairs,
-         (SELECT count(*)::int FROM outcomes WHERE joined_within_7d) AS candidate_joined_within_7d,
+         (SELECT count(*)::int FROM outcomes WHERE pair_formed_within_7d) AS pair_formed_within_7d,
          (SELECT count(*)::int FROM suggestion_feedback) AS feedback_votes,
          (SELECT count(*)::int FROM suggestion_feedback WHERE useful) AS feedback_useful`,
     );
     return {
       ...rows[0],
-      // Honesty contract: the join-within-7d proxy credits ANY team join, not
-      // a join caused by the suggestion. Treat both numbers as directional
-      // until post-event feedback (acceptance, team satisfaction) exists.
-      note: 'Heuristic validation in progress: join_within_7d is an upper-bound proxy (any team join, not suggestion-caused); present scores as a transparent heuristic until post-event outcome data exists.',
+      // Honesty contract: pair_formed_within_7d counts served pairs where BOTH
+      // viewer and candidate provably joined the SAME team after the
+      // impression, within 7 days, from audit event timestamps (immune to
+      // later leave/delete churn; already-teammates and pre-impression joins
+      // are excluded by the timestamp window). It proves the pair formed -
+      // not that the suggestion caused it; correlation, not attribution.
+      note: 'Pair outcome: pair_formed_within_7d counts only pairs where audit events prove both people joined the same team within 7 days after the impression. It proves formation, not causation; present match scores as a transparent heuristic until post-event outcome data exists.',
     };
   });
   // ---- Retention sweep (review-driven): the manual retention policy in

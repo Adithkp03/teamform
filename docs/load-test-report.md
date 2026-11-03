@@ -216,6 +216,27 @@ verifying the host permits load testing.
 Source `35f54a6` adds history-provenance documentation after a token-only history rewrite; application code is unchanged from original `8e46e34` (rewritten `17c1fec`). Run https://github.com/Adithkp03/teamform/actions/runs/41403853587 failed the mixed workload at read p95 **206.47ms** against unchanged `p(95)<200`. It completed 57,459 HTTP requests with 0 failures, 114,816/114,816 checks passing and 12 full mutation cycles. k6 exited 99. This is a measured latency miss; runner variation is a hypothesis, not an established explanation. Prior passing benchmark pairs remain historical results, not a guarantee or a measurement of this run. No production load test was performed.
 
 
+## 3 November 2026: enriched per-run reporting (p50/p95/p99, failures, cold vs warm)
+
+Every push run of the CI-stack workflow now publishes, per k6 scenario in the
+GitHub job summary (no artifact download needed): p50, p95, p99, average, max,
+request count, failed-request count and rate. The 100-VU board scenario runs
+twice back-to-back - the first pass after a fresh seed + API boot (cold) and
+an immediate rerun (warm) - so cold-vs-warm latency is measured on every run,
+and the published history of these tables across runs is the run-to-run
+variation record (the samples table above already shows hosted spread of
+23-378 ms on comparable code).
+
+Test-environment limits, stated plainly: this is the GitHub-hosted CI stack -
+a shared-vCPU `ubuntu-latest` runner with PostgreSQL 16 in a service container
+and k6 on the same box, seeded to 10,000 users / 2,000 teams. It is an
+isolated, repeatable regression environment, not staging and not production:
+absolute numbers are runner-shaped (hosted samples run ~2.7x slower than the
+local sandbox on identical code and seed), so they bound and compare, they do
+not certify production latency. Production load testing is not permitted by
+the host (Vercel policy, quoted above), so no production p95 exists or is
+claimed.
+
 ## 2 November 2026: distinct repeat and in-flight-read optimization samples
 
 All following measurements use the isolated CI stack and full seed, not production. The threshold remains `p(95)<200`.

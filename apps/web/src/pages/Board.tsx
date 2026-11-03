@@ -67,6 +67,11 @@ export default function Board() {
   // once, after a debounce (previously each change fired BOTH an immediate
   // and a debounced request, and either response could land last).
   useEffect(() => {
+    // Invalidate immediately on input change: a loadMore page request still in
+    // flight belongs to the pre-change result set, and its response must be
+    // discarded even before the debounced refresh fires (the refresh would
+    // bump the sequence only after the 350ms wait - too late).
+    seqRef.current++;
     const t = setTimeout(refresh, 350);
     return () => clearTimeout(t);
   }, [refresh]);

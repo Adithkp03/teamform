@@ -161,7 +161,64 @@ describe('matching metrics', () => {
     expect(body.users_served).toBe(1);
     expect(body.feedback_votes).toBe(1);
     expect(body.feedback_useful).toBe(0);
-    expect(body.note).toMatch(/Heuristic validation in progress/);
+    expect(body.note).toMatch(/Pair outcome/);
+  });
+
+  test('pair outcome counts only provable same-team joins after the impression', async () => {
+    const org = await makeEmailUser('Org2', ORG);
+    const me = await makeUser('Viewer', ['react'], 330);
+    const cand = await makeUser('Cand', ['node', 'react'], 330);
+    const solo = await makeUser('Solo', ['go'], 330);
+
+    // Serve suggestions to the viewer: impressions land asynchronously.
+    const served = await app.inject({ method: 'GET', url: '/api/suggestions', headers: auth(me.token) });
+    expect(served.statusCode).toBe(200);
+    expect(served.json().suggestions.length).toBeGreaterThanOrEqual(2);
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Post-impression pair formation: viewer creates a team, the served
+    // candidate requests to join and the viewer accepts. Both join moments
+    // are audit events after the impression.
+    const team = (await createTeam(me.token, 'Pair Team')).json().team;
+    const jr = await requestJoin(cand.token, team.id);
+    expect(jr.statusCode).toBe(201);
+    const accept = await app.inject({ method: 'POST', url: `/api/requests/${jr.json().request.id}/accept`, headers: auth(me.token) });
+    expect(accept.statusCode).toBe(200);
+
+    // One-sided join: the other served candidate founds their own team. The
+    // old any-team-join proxy would have credited this; the pair metric must
+    // not (the viewer is not on that team).
+    expect((await createTeam(solo.token, 'Solo Team')).statusCode).toBe(201);
+
+    const m = await app.inject({ method: 'GET', url: '/api/organizer/matching', headers: auth(org.token) });
+    const body = m.json();
+    expect(m.statusCode).toBe(200);
+    expect(body.unique_pairs).toBeGreaterThanOrEqual(2);
+    expect(body.pair_formed_within_7d).toBe(1);
+  });
+
+  test('pair formation stays provable after a member leaves (audit timestamps, not current membership)', async () => {
+    const org = await makeEmailUser('Org3', ORG);
+    const me = await makeUser('ViewerB', ['react'], 330);
+    const cand = await makeUser('CandB', ['node', 'react'], 330);
+
+    const served = await app.inject({ method: 'GET', url: '/api/suggestions', headers: auth(me.token) });
+    expect(served.statusCode).toBe(200);
+    await new Promise((r) => setTimeout(r, 100));
+
+    const team = (await createTeam(me.token, 'Churn Team')).json().team;
+    const jr = await requestJoin(cand.token, team.id);
+    expect(jr.statusCode).toBe(201);
+    const accept = await app.inject({ method: 'POST', url: `/api/requests/${jr.json().request.id}/accept`, headers: auth(me.token) });
+    expect(accept.statusCode).toBe(200);
+
+    // The candidate leaves again: team_members no longer shows the pair at
+    // all. The audit-derived metric must still prove it formed.
+    const leave = await app.inject({ method: 'POST', url: `/api/teams/${team.id}/leave`, headers: auth(cand.token) });
+    expect(leave.statusCode).toBe(200);
+
+    const m = await app.inject({ method: 'GET', url: '/api/organizer/matching', headers: auth(org.token) });
+    expect(m.json().pair_formed_within_7d).toBe(1);
   });
 });
 

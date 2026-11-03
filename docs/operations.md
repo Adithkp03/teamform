@@ -82,8 +82,9 @@ idempotency records >24h, refresh tokens expired >7d, action tokens
 expired/used >1d, dispatched domain events >7d (past the SSE replay window),
 suggestion impressions >30d, metric rollups >14d. Every real sweep writes an
 audited `retention_sweep` entry with per-table counts; the response includes
-`last_swept_at` so the policy is performed AND tracked. Run it weekly during
-an event. `audit_log` and live user/team data are never touched by the sweep.
+`last_swept_at` so the policy is performed AND tracked, and the organizer
+console shows the last sweep's date and age next to the audit-retention note.
+Run it weekly during an event. `audit_log` and live user/team data are never touched by the sweep.
 Suggestion impressions also self-prune to a rolling 30-day window
 (probabilistic delete on ~2% of serves) as a backstop. Organizers search the log via `GET /api/organizer/audit` including
 for deleted teams, and resolve stuck join requests via
