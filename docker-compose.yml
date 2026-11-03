@@ -30,7 +30,7 @@ services:
     # No command override: the image CMD migrates, then runs the real
     # TypeScript entrypoint (npx tsx apps/api/src/server.ts).
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1 || exit 1"]
       interval: 3s
       timeout: 3s
       retries: 30
