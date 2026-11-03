@@ -73,7 +73,10 @@ test('requester cancels their own pending request from the UI state', async ({ b
   await B.reload();
   await expect(B.getByRole('button', { name: 'Request to join' }).first()).toBeVisible();
 
-  // The leader never sees a decided-away request as pending.
+  // The leader never sees a decided-away request as pending - the whole
+  // pending-requests section disappears. (History still records the
+  // request + cancel as audit entries, so do not match bare <li> text.)
   await A.reload();
-  await expect(A.locator('li', { hasText: 'Cancel Asker' })).toHaveCount(0);
+  await expect(A.getByLabel('Pending join requests')).toHaveCount(0);
+  await expect(A.getByLabel('Audit log').getByText(/Cancel Asker: join request cancelled/)).toBeVisible();
 });
