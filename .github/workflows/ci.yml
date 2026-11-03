@@ -21,10 +21,9 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
-      - name: Typecheck API + web
-        run: |
-          npm run typecheck -w @teamform/api
-          npm run typecheck -w @teamform/web
+      # Web types are already gated below by `tsc -b` inside `npm run build -w @teamform/web`.
+      - name: Typecheck API
+        run: npm run typecheck -w @teamform/api
       - name: Run API tests (incl. 50-way race, idempotency, authz)
         run: npm run test -w @teamform/api
       - name: Serverless bundle is in sync with src (Vercel deploys the bundle)
