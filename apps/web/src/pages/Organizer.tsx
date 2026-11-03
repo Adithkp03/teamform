@@ -223,7 +223,7 @@ export default function Organizer() {
         <p className="text-sm text-slate-700">
           {matching.impressions} suggestions served to {matching.users_served} participants ({matching.candidates_served} candidates).{' '}
           {matching.feedback_votes} usefulness votes, {matching.feedback_useful} positive.{' '}
-          {matching.unique_pairs > 0 ? `${matching.pair_formed_within_7d} of ${matching.unique_pairs} served pairs (${Math.round((100 * matching.pair_formed_within_7d) / matching.unique_pairs)}%) provably formed the same team within 7 days of the impression.` : ''}
+          {matching.unique_pairs > 0 ? `${matching.pair_formed_within_7d} of ${matching.unique_pairs} unique served pairs (deduped per viewer-candidate, timed from the first impression) (${Math.round((100 * matching.pair_formed_within_7d) / matching.unique_pairs)}%) provably formed the same team within 7 days of the impression.` : ''}
         </p>
         <p className="text-xs text-slate-400">{matching.note}</p>
       </section>

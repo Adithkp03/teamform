@@ -1,5 +1,6 @@
 import { pool } from './db.js';
 import { errors } from './errors.js';
+import { selfPruneProb } from './selfprune.js';
 
 /**
  * Fixed-window rate limiting without Redis: one row per (key, window), atomically
@@ -17,7 +18,7 @@ export async function rateLimit(key: string, limit: number, windowSeconds = 60):
   // keeps one row per active key/window instead of unbounded growth.
   // Probability is env-overridable so tests can disable the self-prune (a
   // probabilistic delete racing a fixture row is a ~2% CI flake).
-  if (Math.random() < Number(process.env.SELF_PRUNE_PROB ?? 0.02)) pruneRateLimits().catch(() => {});
+  if (Math.random() < selfPruneProb(0.02)) pruneRateLimits().catch(() => {});
   const { rows } = await pool.query(
     `INSERT INTO rate_limits (key, window_start, count)
      VALUES ($1, date_bin(make_interval(secs => $2::int), now(), timestamptz 'epoch'), 1)

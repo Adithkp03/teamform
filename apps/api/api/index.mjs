@@ -52967,11 +52967,22 @@ init_db();
 
 // src/ratelimit.ts
 init_db();
+
+// src/selfprune.ts
+function selfPruneProb(def) {
+  const raw = process.env.SELF_PRUNE_PROB;
+  if (raw === void 0 || raw.trim() === "") return def;
+  const v = Number(raw);
+  if (!Number.isFinite(v) || v < 0 || v > 1) return def;
+  return v;
+}
+
+// src/ratelimit.ts
 async function pruneRateLimits() {
   await pool.query(`DELETE FROM rate_limits WHERE window_start < now() - interval '2 hours'`);
 }
 async function rateLimit(key, limit, windowSeconds = 60) {
-  if (Math.random() < Number(process.env.SELF_PRUNE_PROB ?? 0.02)) pruneRateLimits().catch(() => {
+  if (Math.random() < selfPruneProb(0.02)) pruneRateLimits().catch(() => {
   });
   const { rows } = await pool.query(
     `INSERT INTO rate_limits (key, window_start, count)
@@ -53609,7 +53620,7 @@ function idempotent(endpoint, handler2) {
     if (key.length < 8 || key.length > 128) {
       throw errors.badRequest("Idempotency-Key must be 8-128 characters");
     }
-    if (Math.random() < Number(process.env.SELF_PRUNE_PROB ?? 0.02)) pruneIdempotencyKeys().catch(() => {
+    if (Math.random() < selfPruneProb(0.02)) pruneIdempotencyKeys().catch(() => {
     });
     const userId = req.userId;
     const paramsHash = hash2({ endpoint, body: req.body });
@@ -54862,7 +54873,7 @@ function buildApp(opts = {}) {
   });
   app2.addHook("onResponse", async (req, reply) => {
     record(req.routeOptions?.url ?? "(unmatched)", reply.statusCode, reply.elapsedTime);
-    if (Math.random() < Number(process.env.SELF_PRUNE_PROB ?? 0.01)) flushOnce();
+    if (Math.random() < selfPruneProb(0.01)) flushOnce();
   });
   app2.addHook("onSend", (req, reply, payload, done) => {
     if (req.method !== "GET" && reply.statusCode < 300 && /^\/api\/(teams|requests|me)(\/|$)/.test(req.url)) {

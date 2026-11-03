@@ -11,6 +11,7 @@ import boardRoutes from './routes/board.js';
 import suggestionRoutes from './routes/suggestions.js';
 import eventRoutes from './routes/events.js';
 import organizerRoutes from './routes/organizer.js';
+import { selfPruneProb } from './selfprune.js';
 
 export function buildApp(opts: { logger?: boolean } = {}) {
   // Every request gets a stable id, echoed as x-request-id and attached to error
@@ -48,7 +49,7 @@ export function buildApp(opts: { logger?: boolean } = {}) {
 
   app.addHook('onResponse', async (req, reply) => {
     record(req.routeOptions?.url ?? '(unmatched)', reply.statusCode, reply.elapsedTime);
-    if (Math.random() < Number(process.env.SELF_PRUNE_PROB ?? 0.01)) flushOnce();
+    if (Math.random() < selfPruneProb(0.01)) flushOnce();
   });
 
   // Board-cache invalidation at ROOT scope so it covers every route plugin

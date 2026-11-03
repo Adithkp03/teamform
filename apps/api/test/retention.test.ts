@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { resetDb, makeUser, createTeam, auth, idemKey } from './helpers';
 import { pool } from '../src/db.js';
 import { pruneRateLimits } from '../src/ratelimit.js';
@@ -36,5 +36,26 @@ describe('retention prunes', () => {
     await pruneRateLimits();
     for (let i = 0; i < 3; i++) await rateLimit('k', 3, 60);
     await expect(rateLimit('k', 3, 60)).rejects.toMatchObject({ statusCode: 429 });
+  });
+});
+
+describe('selfPruneProb guard', () => {
+  const KEY = 'SELF_PRUNE_PROB';
+  let saved: string | undefined;
+  beforeEach(() => { saved = process.env[KEY]; });
+  afterEach(() => { if (saved === undefined) delete process.env[KEY]; else process.env[KEY] = saved; });
+
+  it('defaults when unset, honors a valid override, rejects malformed values', async () => {
+    const { selfPruneProb } = await import('../src/selfprune.js');
+    delete process.env[KEY];
+    expect(selfPruneProb(0.02)).toBe(0.02);
+    process.env[KEY] = '0';
+    expect(selfPruneProb(0.02)).toBe(0);
+    process.env[KEY] = '0.5';
+    expect(selfPruneProb(0.02)).toBe(0.5);
+    for (const bad of ['abc', 'NaN', '2', '-1', 'Infinity', '']) {
+      process.env[KEY] = bad;
+      expect(selfPruneProb(0.02)).toBe(0.02);
+    }
   });
 });

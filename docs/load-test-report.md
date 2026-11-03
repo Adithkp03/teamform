@@ -229,6 +229,17 @@ variation record (the samples table above already shows hosted spread of
 
 First measured sample, run https://github.com/Adithkp03/teamform/actions/runs/41686436569 (commit `8d775d9`): board cold p50/p95/p99 = 54.98/68.78/80.31 ms (105,033 reqs, max 281.74 ms), board warm 56.35/64.44/74.37 ms (104,693 reqs, max 104.01 ms), mixed-read p50/p95/p99 = 67.51/80.80/90.85 ms (169,418/169,418 checks, 16 full cycles); 0 failed requests in all three scenarios. Cold-vs-warm delta is small on the hosted runner; the cold-start max spike seen in run #16 (2,243.7 ms) did not recur here (max 281.74 ms).
 
+Two distinctions, stated precisely: (1) cold vs warm is a WITHIN-run pair
+(the same scenario twice back-to-back); it is NOT run-to-run variation.
+Run-to-run variation is the published history of these per-run summaries
+across pushes - e.g. `35f54a6` vs `0d0b5aa` on identical application code
+(74.13/206.47 ms vs 23.06/36.20 ms board/mixed p95) - cause unproven.
+(2) The CI mixed workload exercises reads + create/join/leave mutations with
+field-level read-your-write checks and a >=12-full-cycle guard; it does NOT
+hold SSE streams. SSE-under-load evidence remains the local multi-instance
+run only (100 streams + 100-VU board, 12/12 write probes on both instances,
+documented below) - SSE is NOT part of the CI load gate.
+
 Test-environment limits, stated plainly: this is the GitHub-hosted CI stack -
 a shared-vCPU `ubuntu-latest` runner with PostgreSQL 16 in a service container
 and k6 on the same box, seeded to 10,000 users / 2,000 teams. It is an

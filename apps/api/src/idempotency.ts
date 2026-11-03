@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { pool } from './db.js';
 import { ApiError, errors } from './errors.js';
+import { selfPruneProb } from './selfprune.js';
 
 const STALE_MS = 60_000;
 
@@ -50,7 +51,7 @@ export function idempotent(
     }
     // Bounded storage on the free DB: probabilistic self-prune (~2% of keyed
     // calls); see pruneIdempotencyKeys for the 24h replay guarantee.
-    if (Math.random() < Number(process.env.SELF_PRUNE_PROB ?? 0.02)) pruneIdempotencyKeys().catch(() => {});
+    if (Math.random() < selfPruneProb(0.02)) pruneIdempotencyKeys().catch(() => {});
     const userId = req.userId as string;
     const paramsHash = hash({ endpoint, body: req.body });
 
