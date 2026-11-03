@@ -6,6 +6,7 @@ import Profile from './pages/Profile';
 import Board from './pages/Board';
 import Team from './pages/Team';
 import Suggestions from './pages/Suggestions';
+import Organizer from './pages/Organizer';
 import { subscribeConnectionState } from './realtime';
 
 function Nav() {
@@ -20,6 +21,7 @@ function Nav() {
         <NavLink to="/board" className={link}>Board</NavLink>
         <NavLink to="/suggestions" className={link}>Suggestions</NavLink>
         <NavLink to="/profile" className={link}>Profile</NavLink>
+        <NavLink to="/organizer" className={link}>Organizer</NavLink>
         <button
           className="btn-ghost ml-auto"
           onClick={() => { logout(); navigate('/login'); }}
@@ -56,6 +58,7 @@ export default function App() {
           <Route path="/team/:id" element={token ? <Team /> : <Navigate to="/login" replace />} />
           <Route path="/suggestions" element={token ? <Suggestions /> : <Navigate to="/login" replace />} />
           <Route path="/profile" element={token ? <Profile /> : <Navigate to="/login" replace />} />
+          <Route path="/organizer" element={token ? <Organizer /> : <Navigate to="/login" replace />} />
           <Route path="*" element={<Navigate to={token ? '/board' : '/login'} replace />} />
         </Routes>
       </main>

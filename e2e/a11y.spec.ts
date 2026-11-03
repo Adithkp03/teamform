@@ -30,9 +30,11 @@ test('no serious/critical axe violations on any page', async ({ page }) => {
   await scan('suggestions');
 });
 
-// Mobile screen-reader pass at phone width: the board's join/create controls,
-// filters and the suggestion feedback votes must stay reachable and named.
-test('mobile 390px: controls stay accessible and named', async ({ page }) => {
+// Mobile accessibility-SEMANTICS pass at phone width: axe scans plus explicit
+// ARIA naming/state assertions (accessible names, aria-pressed). This is NOT
+// VoiceOver/TalkBack testing - it verifies the semantics a screen reader
+// consumes, on the widths a phone screen reader user would have.
+test('mobile 390px: accessibility semantics (not a screen-reader run)', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const scan = async (label: string) => {
     const results = await new AxeBuilder({ page }).analyze();

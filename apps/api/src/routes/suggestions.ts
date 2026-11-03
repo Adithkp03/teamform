@@ -62,6 +62,13 @@ export default async function suggestionRoutes(app: FastifyInstance) {
         `INSERT INTO suggestion_impressions (user_id, candidate_id, score) VALUES ${values}`,
         [req.userId, ...rows.map((r: any) => r.id), ...rows.map((r: any) => r.score)],
       ).catch(() => {});
+      // Bounded storage on the free DB: impressions are a rolling 30-day
+      // window, pruned probabilistically (~2% of serves) so the table cannot
+      // grow without limit. Feedback votes are keyed per (user, candidate)
+      // and bounded by participant count squared in the worst case.
+      if (Math.random() < 0.02) {
+        pool.query(`DELETE FROM suggestion_impressions WHERE created_at < now() - interval '30 days'`).catch(() => {});
+      }
     }
     return {
       scoring: 'score = 2*complementary_skills + 1*shared_skills + timezone_fit (same tz=2, within 2h=1, else 0)',

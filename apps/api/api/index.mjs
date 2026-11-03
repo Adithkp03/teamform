@@ -52944,7 +52944,10 @@ async function requireOrganizer(req, reply) {
   await authenticate(req, reply);
   const allowed = organizerEmails();
   if (!allowed.size) throw errors.forbidden("No organizers are configured on this deployment");
-  const { rows } = await pool.query(`SELECT lower(email) AS email FROM profiles WHERE id = $1`, [req.userId]);
+  const { rows } = await pool.query(
+    `SELECT lower(email) AS email FROM profiles WHERE id = $1 AND email_verified_at IS NOT NULL`,
+    [req.userId]
+  );
   const email = rows[0]?.email;
   if (!email || !allowed.has(email)) throw errors.forbidden("Organizer access required");
 }
@@ -53939,6 +53942,10 @@ async function suggestionRoutes(app2) {
         [req.userId, ...rows.map((r) => r.id), ...rows.map((r) => r.score)]
       ).catch(() => {
       });
+      if (Math.random() < 0.02) {
+        pool.query(`DELETE FROM suggestion_impressions WHERE created_at < now() - interval '30 days'`).catch(() => {
+        });
+      }
     }
     return {
       scoring: "score = 2*complementary_skills + 1*shared_skills + timezone_fit (same tz=2, within 2h=1, else 0)",

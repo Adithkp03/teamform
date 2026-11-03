@@ -248,12 +248,22 @@ const organizerEmails = () =>
       .filter(Boolean),
   );
 
-/** Fastify preHandler: authenticate + require the caller's profile email in ORGANIZER_EMAILS. */
+/** Fastify preHandler: authenticate + require the caller's profile email in ORGANIZER_EMAILS.
+ *
+ * The email must be VERIFIED (email_verified_at set): an allowlisted address
+ * on an unverified profile proves nothing - legacy signup accepts any email
+ * without proof of ownership, so without this check anyone could register an
+ * organizer's address with their own password and take organizer rights.
+ * Firebase-exchanged profiles are verified by the exchange gate; legacy
+ * profiles become eligible only after consuming a verification link. */
 export async function requireOrganizer(req: any, reply: any) {
   await authenticate(req, reply);
   const allowed = organizerEmails();
   if (!allowed.size) throw errors.forbidden('No organizers are configured on this deployment');
-  const { rows } = await pool.query(`SELECT lower(email) AS email FROM profiles WHERE id = $1`, [req.userId]);
+  const { rows } = await pool.query(
+    `SELECT lower(email) AS email FROM profiles WHERE id = $1 AND email_verified_at IS NOT NULL`,
+    [req.userId],
+  );
   const email = rows[0]?.email as string | undefined;
   if (!email || !allowed.has(email)) throw errors.forbidden('Organizer access required');
 }

@@ -164,3 +164,28 @@ describe('matching metrics', () => {
     expect(body.note).toMatch(/Heuristic validation in progress/);
   });
 });
+
+describe('organizer identity binding', () => {
+  test('an UNVERIFIED profile carrying an allowlisted email gets no organizer rights', async () => {
+    // Legacy signup accepts any email with any password - ownership unproven.
+    const org = await makeEmailUser('Not Really Org', ORG, { verified: false }); // email_verified_at NULL
+    const res = await app.inject({ method: 'GET', url: '/api/organizer/overview', headers: auth(org.token) });
+    expect(res.statusCode).toBe(403);
+
+    // After consuming a verification link, the same profile is eligible.
+    const { issueActionToken } = await import('../src/auth.js');
+    const vt = await issueActionToken(org.id, 'verify');
+    await app.inject({ method: 'POST', url: '/api/auth/verify-email', payload: { token: vt } });
+    const ok = await app.inject({ method: 'GET', url: '/api/organizer/overview', headers: auth(org.token) });
+    expect(ok.statusCode).toBe(200);
+  });
+
+  test('a Firebase-verified identity with the allowlisted email is eligible', async () => {
+    const { firebaseSignup } = await import('./helpers.js');
+    const res = await firebaseSignup('Firebase Org', ORG, true);
+    expect(res.statusCode).toBe(200);
+    const token = res.json().token as string;
+    const ok = await app.inject({ method: 'GET', url: '/api/organizer/overview', headers: auth(token) });
+    expect(ok.statusCode).toBe(200);
+  });
+});

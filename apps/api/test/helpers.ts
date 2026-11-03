@@ -36,11 +36,11 @@ export async function makeUser(name = 'User', skills: string[] = [], utcOffset =
   return { id, token: signToken(id) };
 }
 
-/** User with an email address (needed by the organizer allowlist check). */
-export async function makeEmailUser(name: string, email: string) {
+/** User with a VERIFIED email address (organizer allowlist requires verification). */
+export async function makeEmailUser(name: string, email: string, opts: { verified?: boolean } = {}) {
   const id = crypto.randomUUID();
   await pool.query(
-    `INSERT INTO profiles (id, display_name, email) VALUES ($1, $2, $3)`,
+    `INSERT INTO profiles (id, display_name, email, email_verified_at) VALUES ($1, $2, $3, ${opts.verified === false ? 'NULL' : 'now()'})`,
     [id, name, email.toLowerCase()],
   );
   return { id, token: signToken(id) };

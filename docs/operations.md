@@ -22,8 +22,11 @@ request id can be tied to one exact failing request in Vercel logs.
 ## Alerting (free tier)
 
 `.github/workflows/health-monitor.yml` pings `/api/health`, `/api/metrics` and
-the web app every 15 minutes; a failed run emails the repo owner (GitHub
-Actions notification). GitHub can delay scheduled runs, so treat this as
+the web app every 15 minutes. The alert itself is GitHub's NATIVE Actions
+failure notification to the repo owner - the workflow sends nothing itself,
+introduces no third party, and only reads public endpoints. If the owner's
+GitHub notification settings silence Actions mail, no alert goes out; check
+Settings -> Notifications. GitHub can delay scheduled runs, so treat this as
 best-effort detection on top of the dashboards, not a paging SLA.
 
 ## Dashboards that already exist
@@ -66,9 +69,11 @@ reset revokes every family at its next rotation.
 ## Audit retention and export
 
 `audit_log` rows are never deleted by application flows (team deletion keeps
-the trail). Retention policy: keep for the life of the event plus 90 days,
-then export to CSV (`GET /api/organizer/audit/export`) for archive before any
-cleanup. Organizers search the log via `GET /api/organizer/audit` including
+the trail). Retention is a MANUAL policy, not an automation: nothing deletes
+audit rows automatically. Keep them for the life of the event plus 90 days,
+export to CSV (`GET /api/organizer/audit/export`) for archive, then clean up
+by hand if storage matters. Suggestion impressions self-prune to a rolling
+30-day window (probabilistic delete on ~2% of serves). Organizers search the log via `GET /api/organizer/audit` including
 for deleted teams, and resolve stuck join requests via
 `/api/organizer/requests/stuck` + `/resolve` (cancel-with-reason only; seat
 invariants are never overridden by operators).
