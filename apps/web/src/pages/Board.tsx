@@ -34,6 +34,29 @@ export default function Board() {
   // Sequence guard: only the newest board response may land, so a slow older
   // reply can never overwrite fresher results (stale-response race fix).
   const seqRef = useRef(0);
+  // Loaded-coverage tracking: how many items of each list are currently
+  // displayed (plus an in-flight loadMore allowance). A background refresh of
+  // the SAME result set asks for at least this many rows, so live updates can
+  // never snap the board back to page 1 or resurrect a finished Load-more.
+  // Filter changes zero these (a new result set starts at page 1).
+  const loadedTeamsRef = useRef(0);
+  const loadedPeopleRef = useRef(0);
+  // The demand pump: refs count displayed items PLUS in-flight loadMore
+  // demand. Whenever any fetch settles (refresh commit/failure, loadMore
+  // landing or being discarded), queued demand that exceeds the displayed
+  // coverage triggers one next-page fetch - so a click swallowed by a racing
+  // refresh always advances once the board settles, under any interleaving.
+  const boardRef = useRef<{ teams: any[]; people: any[]; next_teams_cursor: string | null; next_people_cursor: string | null } | null>(null);
+  const loadingMoreRef = useRef(false);
+  const loadMoreRef = useRef<() => void>(() => {});
+  const pump = () => {
+    if (loadingMoreRef.current) return; // a page fetch is in flight; its settle re-pumps
+    const b = boardRef.current;
+    if (!b) return;
+    const owedTeams = loadedTeamsRef.current > b.teams.length && b.next_teams_cursor;
+    const owedPeople = loadedPeopleRef.current > b.people.length && b.next_people_cursor;
+    if (owedTeams || owedPeople) loadMoreRef.current();
+  };
 
   const queryString = useCallback((extra?: Record<string, string>) => {
     const params = new URLSearchParams({ limit: '24' });
@@ -54,9 +77,86 @@ export default function Board() {
   const refresh = useCallback(() => {
     const seq = ++seqRef.current;
     const qs = queryString();
-    return api(`/api/board?${qs}`, { token })
-      .then((d) => { if (seq === seqRef.current) { boardQueryRef.current = qs; setBoard(d); } })
-      .catch((e) => { if (seq === seqRef.current) toast(e.message, 'error'); });
+    // Evaluated live below: a refresh may START before any commit of this
+    // query (boardQueryRef still empty) yet COMMIT after one - sameness must
+    // be re-judged then, or a same-set refresh wrongly replaces the board
+    // with page 1 and stomps pages loaded meanwhile (the snapback race).
+    const sameSetNow = () => qs === boardQueryRef.current;
+    const sameSet = sameSetNow();
+    // Same result set (live update or reconnect): restore the coverage the
+    // user already loaded instead of snapping back to page 1. The server caps
+    // one page at 200 rows, so wider coverage is restored with sequential
+    // cursor pages, committed in a single update - no intermediate snapback,
+    // no new snapback past 200, no duplicates (pages merge by id).
+    const target = sameSet ? Math.max(24, loadedTeamsRef.current, loadedPeopleRef.current) : 24;
+    const collect = async () => {
+      let teams: any[] = [];
+      let people: any[] = [];
+      let tc: string | null = null;
+      let pc: string | null = null;
+      let teamsDone = false;
+      let peopleDone = false;
+      let first: any = null;
+      for (let guard = 0; guard < 50; guard++) {
+        // Re-read the live coverage every page: a loadMore racing this
+        // refresh bumps the refs while pages are in flight, and the refresh
+        // must cover that page too instead of stomping it on commit.
+        const liveTarget = sameSetNow() ? Math.max(target, loadedTeamsRef.current, loadedPeopleRef.current) : target;
+        const params = new URLSearchParams(qs);
+        const remaining = liveTarget - Math.max(teams.length, people.length);
+        params.set('limit', String(Math.min(200, Math.max(24, remaining))));
+        if (!teamsDone && tc) params.set('teams_cursor', tc);
+        if (!peopleDone && pc) params.set('people_cursor', pc);
+        const d = await api(`/api/board?${params}`, { token });
+        if (seq !== seqRef.current) return null; // a newer refresh owns the board
+        first = first ?? d;
+        if (!teamsDone) {
+          const seen = new Set(teams.map((t: any) => t.id));
+          teams = [...teams, ...d.teams.filter((t: any) => !seen.has(t.id))];
+          tc = d.next_teams_cursor;
+          teamsDone = teams.length >= liveTarget || !tc;
+        }
+        if (!peopleDone) {
+          const seen = new Set(people.map((p: any) => p.id));
+          people = [...people, ...d.people.filter((p: any) => !seen.has(p.id))];
+          pc = d.next_people_cursor;
+          peopleDone = people.length >= liveTarget || !pc;
+        }
+        if (teamsDone && peopleDone) break;
+      }
+      return { ...first, teams, people, next_teams_cursor: tc, next_people_cursor: pc };
+    };
+    // Coverage can grow while the final page is in flight (a loadMore click
+    // landing mid-refresh): re-check at commit and refetch rather than commit
+    // a board that shows LESS than the user already loaded (the snapback).
+    const run = async (attempt: number): Promise<any> => {
+      const d = await collect();
+      if (!d || seq !== seqRef.current) return null;
+      if (sameSetNow() && attempt < 3) {
+        const wanted = Math.max(loadedTeamsRef.current, loadedPeopleRef.current);
+        const covered = Math.max(d.teams.length, d.people.length);
+        if (wanted > covered && (d.next_teams_cursor || d.next_people_cursor)) return run(attempt + 1);
+      }
+      return d;
+    };
+    return run(0)
+      .then((d) => {
+        if (!d || seq !== seqRef.current) return;
+        boardQueryRef.current = qs; // base query (page-1 limit) for loadMore and same-set comparison
+        // NEVER lower the coverage allowance on ANY commit: the refs are a
+        // demand ledger, and a loadMore click may have recorded demand before
+        // this refresh even started (the mount race: a superseded first
+        // refresh leaves boardQueryRef empty, so this commit judges itself a
+        // new query - but the demand was real and the pump must still owe the
+        // page). Genuine query changes zero the refs in the input effect
+        // before the new-query refresh fires, so unbounded growth is
+        // impossible; a shrunken result set is bounded by the null cursor.
+        loadedTeamsRef.current = Math.max(loadedTeamsRef.current, d.teams.length);
+        loadedPeopleRef.current = Math.max(loadedPeopleRef.current, d.people.length);
+        setBoard(d);
+        pump(); // a loadMore click swallowed by this refresh left owed demand
+      })
+      .catch((e) => { if (seq === seqRef.current) { toast(e.message, 'error'); pump(); } });
   }, [token, queryString]);
 
   const fetchInvitations = useCallback(() => {
@@ -66,15 +166,27 @@ export default function Board() {
   // Server-side search: typing and filter changes re-query the whole board
   // once, after a debounce (previously each change fired BOTH an immediate
   // and a debounced request, and either response could land last).
+  // Query identity is derived from the actual inputs, NOT the callback's
+  // identity: an access-token rotation (or the cookie boot restore) recreates
+  // `refresh` with the SAME query, and must neither reset coverage nor
+  // discard a loadMore for the same result set - the refresh is same-set and
+  // preserves loaded pages.
+  const queryInputsRef = useRef('');
   useEffect(() => {
-    // Invalidate immediately on input change: a loadMore page request still in
-    // flight belongs to the pre-change result set, and its response must be
-    // discarded even before the debounced refresh fires (the refresh would
-    // bump the sequence only after the 350ms wait - too late).
+    const key = queryString();
+    const queryChanged = queryInputsRef.current !== '' && queryInputsRef.current !== key;
+    queryInputsRef.current = key;
     seqRef.current++;
-    const t = setTimeout(refresh, 350);
+    if (queryChanged) {
+      // Result set is about to change: start from page 1. A loadMore page
+      // request still in flight belongs to the pre-change set and is
+      // discarded by the sequence guard above.
+      loadedTeamsRef.current = 0;
+      loadedPeopleRef.current = 0;
+    }
+    const t = setTimeout(() => refreshRef.current(), 350);
     return () => clearTimeout(t);
-  }, [refresh]);
+  }, [queryString, token]);
 
   useEffect(() => {
     api('/api/me', { token }).then((d) => setMe(d.profile)).catch(() => {});
@@ -109,29 +221,45 @@ export default function Board() {
     }
   }
 
+  useEffect(() => { loadMoreRef.current = () => { void loadMore(); }; });
+  useEffect(() => { boardRef.current = board; });
+
   async function loadMore() {
-    if (!board || loadingMore) return;
+    if (!board || loadingMoreRef.current) return;
     const extra: Record<string, string> = {};
     if (tab === 'teams' && board.next_teams_cursor) extra.teams_cursor = board.next_teams_cursor;
     if (tab === 'people' && board.next_people_cursor) extra.people_cursor = board.next_people_cursor;
     if (!extra.teams_cursor && !extra.people_cursor) return;
+    loadingMoreRef.current = true;
     // Same sequence guard as refresh: if filters change while this page
     // request is in flight, the refresh owns the board and this stale page
     // must be discarded instead of appended to the new results.
     const seq = seqRef.current;
+    // Optimistic coverage allowance: a same-set refresh racing this request
+    // over-fetches by a page (harmless) instead of under-fetching (snapback).
+    if (tab === 'teams') loadedTeamsRef.current += 24; else loadedPeopleRef.current += 24;
     setLoadingMore(true);
     try {
       const base = new URLSearchParams(boardQueryRef.current || queryString());
       for (const [k, v] of Object.entries(extra)) base.set(k, v);
       const next = await api(`/api/board?${base}`, { token });
-      if (seq !== seqRef.current) return;
-      setBoard((prev) => prev && {
-        teams: tab === 'teams' ? [...prev.teams, ...next.teams] : prev.teams,
-        people: tab === 'people' ? [...prev.people, ...next.people] : prev.people,
-        next_teams_cursor: tab === 'teams' ? next.next_teams_cursor : prev.next_teams_cursor,
-        next_people_cursor: tab === 'people' ? next.next_people_cursor : prev.next_people_cursor,
+      if (seq !== seqRef.current) return; // a refresh owns the board now; its coverage includes this page
+      setBoard((prev) => {
+        if (!prev) return prev;
+        const seenT = new Set(prev.teams.map((t: any) => t.id));
+        const seenP = new Set(prev.people.map((p: any) => p.id));
+        const teams = tab === 'teams' ? [...prev.teams, ...next.teams.filter((t: any) => !seenT.has(t.id))] : prev.teams;
+        const people = tab === 'people' ? [...prev.people, ...next.people.filter((p: any) => !seenP.has(p.id))] : prev.people;
+        loadedTeamsRef.current = teams.length;
+        loadedPeopleRef.current = people.length;
+        return {
+          teams,
+          people,
+          next_teams_cursor: tab === 'teams' ? next.next_teams_cursor : prev.next_teams_cursor,
+          next_people_cursor: tab === 'people' ? next.next_people_cursor : prev.next_people_cursor,
+        };
       });
-    } catch (e: any) { toast(e.message, 'error'); } finally { setLoadingMore(false); }
+    } catch (e: any) { toast(e.message, 'error'); } finally { loadingMoreRef.current = false; setLoadingMore(false); pump(); }
   }
 
   async function joinWithCode(e: FormEvent) {

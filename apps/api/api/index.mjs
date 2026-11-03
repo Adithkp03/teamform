@@ -54184,14 +54184,16 @@ function parseCursor(raw) {
   if (typeof raw !== "string" || !raw) return null;
   try {
     const [ts, id] = Buffer.from(raw, "base64url").toString("utf8").split("|");
-    if (!ts || !id || Number.isNaN(Date.parse(ts))) return null;
-    if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
-    return { ts, id };
+    if (!/^[0-9a-f-]{36}$/i.test(id ?? "")) return null;
+    if (/^\d{1,20}$/.test(ts)) return { us: ts, id };
+    const ms = Date.parse(ts);
+    if (!Number.isNaN(ms)) return { us: String(ms * 1e3), id };
+    return null;
   } catch {
     return null;
   }
 }
-var encCursor = (ts, id) => Buffer.from(`${new Date(ts).toISOString()}|${id}`).toString("base64url");
+var encCursor = (us, id) => Buffer.from(`${us}|${id}`).toString("base64url");
 async function boardRoutes(app2) {
   const querySchema = external_exports.object({
     limit: external_exports.coerce.number().int().min(1).max(200).default(50),
@@ -54219,6 +54221,7 @@ async function boardRoutes(app2) {
         `WITH page AS (
            SELECT t.id, t.name, t.wanted_skills, t.created_at, t.leader_id, t.member_count,
                   h.team_size_min, h.team_size_max,
+                  floor(extract(epoch from t.created_at) * 1000000)::bigint AS cursor_us,
                   lp.display_name AS leader_name, lp.timezone AS leader_timezone
            FROM teams t
            JOIN hackathons h ON h.id = t.hackathon_id
@@ -54229,37 +54232,39 @@ async function boardRoutes(app2) {
              AND ($5::text IS NULL OR $5 = ANY(t.wanted_skills))
              AND ($6::int IS NULL OR (h.team_size_max - t.member_count) >= $6)
              AND ($7::text IS NULL OR lp.timezone = $7)
-             AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2::timestamptz, $3::uuid))
+             AND ($2::bigint IS NULL OR (t.created_at, t.id) < (to_timestamp($2::numeric / 1000000), $3::uuid))
            ORDER BY t.created_at DESC, t.id DESC
            LIMIT $1
          )
          SELECT page.*, (page.member_count >= page.team_size_min) AS is_complete
          FROM page
          ORDER BY page.created_at DESC, page.id DESC`,
-        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null, query.timezone ?? null]
+        [limit, tc?.us ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null, query.timezone ?? null]
       );
       const people = pool.query(
-        `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
+        `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at,
+                floor(extract(epoch from p.last_active_at) * 1000000)::bigint AS cursor_us
          FROM profiles p
          WHERE p.looking_for_team
            AND NOT EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = p.id)
            AND ($4::text IS NULL OR p.display_name ILIKE $4)
            AND ($5::text IS NULL OR $5 = ANY(p.skills))
            AND ($6::text IS NULL OR p.timezone = $6)
-           AND ($2::timestamptz IS NULL OR (p.last_active_at, p.id) < ($2::timestamptz, $3::uuid))
+           AND ($2::bigint IS NULL OR (p.last_active_at, p.id) < (to_timestamp($2::numeric / 1000000), $3::uuid))
          ORDER BY p.last_active_at DESC, p.id DESC
          LIMIT $1`,
-        [limit, pc?.ts ?? null, pc?.id ?? null, q, query.skill ?? null, query.timezone ?? null]
+        [limit, pc?.us ?? null, pc?.id ?? null, q, query.skill ?? null, query.timezone ?? null]
       );
       const [teamsR, peopleR] = await Promise.all([teams, people]);
       const lastT = teamsR.rows[teamsR.rows.length - 1];
       const lastP = peopleR.rows[peopleR.rows.length - 1];
       return {
-        teams: teamsR.rows,
+        teams: teamsR.rows.map(({ cursor_us, ...rest }) => rest),
         // last_active_at is selected for cursor encoding only - never exposed.
-        people: peopleR.rows.map(({ last_active_at, ...rest }) => rest),
-        next_teams_cursor: teamsR.rows.length === limit && lastT ? encCursor(lastT.created_at, lastT.id) : null,
-        next_people_cursor: peopleR.rows.length === limit && lastP ? encCursor(lastP.last_active_at, lastP.id) : null,
+        // cursor_us and last_active_at exist for cursor encoding only - never exposed.
+        people: peopleR.rows.map(({ last_active_at, cursor_us, ...rest }) => rest),
+        next_teams_cursor: teamsR.rows.length === limit && lastT ? encCursor(lastT.cursor_us, lastT.id) : null,
+        next_people_cursor: peopleR.rows.length === limit && lastP ? encCursor(lastP.cursor_us, lastP.id) : null,
         generated_at: (/* @__PURE__ */ new Date()).toISOString()
       };
     });
