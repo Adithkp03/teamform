@@ -121,3 +121,52 @@ test('no body and no cookie is a clean 401; logout without credentials is a no-o
   const out = await app.inject({ method: 'POST', url: '/api/auth/logout', payload: {} });
   expect(out.statusCode).toBe(200);
 });
+
+test('login CSRF: session-issuing routes refuse a disallowed browser Origin (no cookie planted)', async () => {
+  const evil = { origin: 'https://evil.example' };
+  const fx = await app.inject({
+    method: 'POST', url: '/api/auth/firebase',
+    payload: { id_token: testIdToken(uniq('lc')), firebase_refresh_token: testRefreshToken(uniq('lc')), display_name: 'T' },
+    headers: evil,
+  });
+  expect(fx.statusCode).toBe(403);
+  expect(cookieOf(fx)).toBeNull();
+  const claim = await app.inject({ method: 'POST', url: '/api/auth/firebase/claim', payload: {}, headers: evil });
+  expect(claim.statusCode).toBe(403);
+  const legacy = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'a@b.co', password: 'password123' }, headers: evil });
+  expect(legacy.statusCode).toBe(403);
+  const su = await app.inject({ method: 'POST', url: '/api/auth/signup', payload: { email: 'a@b.co', password: 'password123', display_name: 'T' }, headers: evil });
+  expect(su.statusCode).toBe(403);
+});
+
+test('issuing routes accept the allowed web origin and non-browser clients (no Origin header)', async () => {
+  const ok = await exchange(uniq('ok')); // no Origin header: curl/test/CLI path
+  expect(ok.statusCode).toBe(200);
+  const webEmail = uniq('web');
+  const web = await app.inject({
+    method: 'POST', url: '/api/auth/firebase',
+    payload: { id_token: testIdToken(webEmail), firebase_refresh_token: testRefreshToken(webEmail), display_name: 'T' },
+    headers: { origin: 'http://localhost:3101' },
+  });
+  expect(web.statusCode).toBe(200);
+  expect(cookieOf(web)).toBeTruthy();
+});
+
+test('body-mode refresh with an ambient cookie cannot bypass the Origin check', async () => {
+  const s = await exchange(uniq('amb'));
+  const rt = s.json().refresh_token;
+  const c = cookieToken(s);
+  const bad = await app.inject({
+    method: 'POST', url: '/api/auth/refresh',
+    payload: { refresh_token: rt },
+    headers: { cookie: `tf_rt=${c}`, origin: 'https://evil.example' },
+  });
+  expect(bad.statusCode).toBe(403);
+  // The rejected attempt did not rotate: the same body token still works from an allowed origin.
+  const good = await app.inject({
+    method: 'POST', url: '/api/auth/refresh',
+    payload: { refresh_token: rt },
+    headers: { cookie: `tf_rt=${c}`, origin: 'http://localhost:3101' },
+  });
+  expect(good.statusCode).toBe(200);
+});

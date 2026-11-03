@@ -1,8 +1,8 @@
 import { initializeApp, getApps } from '@firebase/app';
 import {
-  getAuth, setPersistence, inMemoryPersistence, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail,
-  signOut, type User,
+  getAuth, setPersistence, inMemoryPersistence, browserLocalPersistence,
+  signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification,
+  sendPasswordResetEmail, signOut, type User,
 } from '@firebase/auth';
 
 // Public client configuration (shipped to browsers by design; not a secret).

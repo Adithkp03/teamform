@@ -45,10 +45,13 @@ const allowedOrigins = () => {
     : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3101', 'http://127.0.0.1:3101'];
 };
 
-/** CSRF check for requests that authenticate WITH the refresh cookie: a
- *  browser-supplied Origin must be an explicitly allowed web origin.
- *  Requests without an Origin header (curl, server-to-server) are
- *  unaffected - SameSite=Lax already keeps the cookie off cross-site POSTs. */
+/** CSRF check for every session-issuing and cookie-authenticated route: a
+ *  browser-supplied Origin must be an explicitly allowed web origin. Applied
+ *  to ALL of them (not just refresh/logout) so a cross-site POST cannot plant
+ *  an attacker-controlled session cookie (login CSRF) - including via a
+ *  known body token under an ambient cookie. Requests without an Origin
+ *  header (curl, server-to-server, the e2e/API test seams) are unaffected;
+ *  SameSite=Lax remains the primary control on the cookie itself. */
 export function assertCookieOrigin(req: FastifyRequest): void {
   const origin = req.headers.origin;
   if (!origin) return;

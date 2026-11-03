@@ -53266,6 +53266,7 @@ async function authRoutes(app2) {
     });
   }
   app2.post("/api/auth/signup", async (req, reply) => {
+    assertCookieOrigin(req);
     const body = parse(credSchema.extend({ display_name: external_exports.string().trim().min(1).max(80) }), req.body);
     await rateLimit(`auth:${req.ip}`, 10, 60);
     const password_hash = await bcryptjs_default.hash(body.password, 10);
@@ -53286,6 +53287,7 @@ async function authRoutes(app2) {
     return { token: signToken(id, session.familyId), refresh_token: session.token, user_id: id, cookie_set: true };
   });
   app2.post("/api/auth/login", async (req, reply) => {
+    assertCookieOrigin(req);
     const body = parse(credSchema, req.body);
     await rateLimit(`auth:${req.ip}`, 10, 60);
     const { rows } = await pool.query(
@@ -53300,6 +53302,7 @@ async function authRoutes(app2) {
     return { token: signToken(rows[0].id, session.familyId), refresh_token: session.token, user_id: rows[0].id, cookie_set: true };
   });
   app2.post("/api/auth/firebase", async (req, reply) => {
+    assertCookieOrigin(req);
     const body = parse(external_exports.object({
       id_token: external_exports.string().min(1).max(8192),
       firebase_refresh_token: external_exports.string().min(1).max(4096),
@@ -53368,6 +53371,7 @@ async function authRoutes(app2) {
     return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId, cookie_set: true };
   });
   app2.post("/api/auth/firebase/claim", async (req, reply) => {
+    assertCookieOrigin(req);
     const body = parse(external_exports.object({
       id_token: external_exports.string().min(1).max(8192),
       firebase_refresh_token: external_exports.string().min(1).max(4096),
@@ -53464,8 +53468,8 @@ async function authRoutes(app2) {
   app2.post("/api/auth/refresh", async (req, reply) => {
     const body = parse(external_exports.object({ refresh_token: external_exports.string().min(1).max(128).optional() }), req.body ?? {});
     await rateLimit(`auth:${req.ip}`, 30, 60);
+    assertCookieOrigin(req);
     const cookieToken = parseRefreshCookie(req.headers.cookie);
-    if (!body.refresh_token && cookieToken) assertCookieOrigin(req);
     const presentedToken = body.refresh_token ?? cookieToken;
     if (!presentedToken) throw errors.unauthorized();
     const presented = await pool.query(
@@ -53508,8 +53512,8 @@ async function authRoutes(app2) {
   app2.post("/api/auth/logout", async (req, reply) => {
     const body = parse(external_exports.object({ refresh_token: external_exports.string().min(1).max(128).optional() }), req.body ?? {});
     await rateLimit(`auth:${req.ip}`, 30, 60);
+    assertCookieOrigin(req);
     const cookieToken = parseRefreshCookie(req.headers.cookie);
-    if (cookieToken) assertCookieOrigin(req);
     if (body.refresh_token) await revokeRefreshToken(body.refresh_token);
     if (cookieToken && cookieToken !== body.refresh_token) await revokeRefreshToken(cookieToken);
     clearRefreshCookie(reply);

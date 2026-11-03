@@ -57,6 +57,7 @@ export default async function authRoutes(app: FastifyInstance) {
   }
 
   app.post('/api/auth/signup', async (req, reply) => {
+    assertCookieOrigin(req); // login-CSRF: never issue/plant a session for a disallowed browser origin
     const body = parse(credSchema.extend({ display_name: z.string().trim().min(1).max(80) }), req.body);
     await rateLimit(`auth:${req.ip}`, 10, 60);
     const password_hash = await bcrypt.hash(body.password, 10);
@@ -78,6 +79,7 @@ export default async function authRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/auth/login', async (req, reply) => {
+    assertCookieOrigin(req); // login-CSRF: never issue/plant a session for a disallowed browser origin
     const body = parse(credSchema, req.body);
     await rateLimit(`auth:${req.ip}`, 10, 60);
     const { rows } = await pool.query(
@@ -102,6 +104,7 @@ export default async function authRoutes(app: FastifyInstance) {
   // Verification status comes from the verified token server-side, never
   // from client-reported state.
   app.post('/api/auth/firebase', async (req, reply) => {
+    assertCookieOrigin(req); // login-CSRF: never issue/plant a session for a disallowed browser origin
     const body = parse(z.object({
       id_token: z.string().min(1).max(8192),
       firebase_refresh_token: z.string().min(1).max(4096),
@@ -198,6 +201,7 @@ export default async function authRoutes(app: FastifyInstance) {
   // roles, its password is cleared, all prior sessions are revoked, and a
   // fresh Firebase-backed session family is issued.
   app.post('/api/auth/firebase/claim', async (req, reply) => {
+    assertCookieOrigin(req); // login-CSRF: never issue/plant a session for a disallowed browser origin
     const body = parse(z.object({
       id_token: z.string().min(1).max(8192),
       firebase_refresh_token: z.string().min(1).max(4096),
@@ -311,8 +315,8 @@ export default async function authRoutes(app: FastifyInstance) {
     // Dual mode: an explicit body token (legacy clients, CLI, tests) wins;
     // otherwise the HttpOnly session cookie authenticates. Cookie-based use
     // requires an allowed Origin - CSRF defense-in-depth on top of Lax.
+    assertCookieOrigin(req);
     const cookieToken = parseRefreshCookie(req.headers.cookie as string | undefined);
-    if (!body.refresh_token && cookieToken) assertCookieOrigin(req);
     const presentedToken = body.refresh_token ?? cookieToken;
     if (!presentedToken) throw errors.unauthorized();
     // Firebase-side revocation enforcement, checked BEFORE rotating so a
@@ -380,8 +384,8 @@ export default async function authRoutes(app: FastifyInstance) {
     // the session cookie. They usually name one family, but right after a
     // client upgrade they can briefly diverge - both must die, and the
     // cookie is always cleared so the browser stops presenting it.
+    assertCookieOrigin(req);
     const cookieToken = parseRefreshCookie(req.headers.cookie as string | undefined);
-    if (cookieToken) assertCookieOrigin(req);
     if (body.refresh_token) await revokeRefreshToken(body.refresh_token);
     if (cookieToken && cookieToken !== body.refresh_token) await revokeRefreshToken(cookieToken);
     clearRefreshCookie(reply);
