@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parse } from '../util.js';
 import { pool } from '../db.js';
-import { authenticate } from '../auth.js';
+import { authenticate, requireOrganizer } from '../auth.js';
 import { readBoard } from '../boardcache.js';
 
 // Opaque keyset cursors: base64url("timestamp|id"). Keyset pagination keeps
@@ -43,28 +43,34 @@ export default async function boardRoutes(app: FastifyInstance) {
     const cacheKey = [limit, query.teams_cursor ?? '', query.people_cursor ?? '', q ?? '', query.skill ?? '', query.timezone ?? '', query.min_open_seats ?? ''].join('|');
     return readBoard(cacheKey, async () => {
       const teams = pool.query(
+        // The timezone filter applies to TEAMS as well as people (matched on
+        // the leader's timezone, the same signal the card's match reason
+        // shows), so the board copy "filters apply across the whole board" is
+        // true. Filtering happens inside the page CTE so pagination counts
+        // only matching teams.
         `WITH page AS (
            SELECT t.id, t.name, t.wanted_skills, t.created_at, t.leader_id, t.member_count,
-                  h.team_size_min, h.team_size_max
+                  h.team_size_min, h.team_size_max,
+                  lp.display_name AS leader_name, lp.timezone AS leader_timezone,
+                  jr.id AS my_pending_request_id
            FROM teams t
            JOIN hackathons h ON h.id = t.hackathon_id
+           JOIN profiles lp ON lp.id = t.leader_id
+           LEFT JOIN join_requests jr ON jr.team_id = t.id AND jr.user_id = $8 AND jr.status = 'pending'
            WHERE t.looking_for_members
              AND t.member_count < h.team_size_max
              AND ($4::text IS NULL OR t.name ILIKE $4)
              AND ($5::text IS NULL OR $5 = ANY(t.wanted_skills))
              AND ($6::int IS NULL OR (h.team_size_max - t.member_count) >= $6)
+             AND ($7::text IS NULL OR lp.timezone = $7)
              AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2::timestamptz, $3::uuid))
            ORDER BY t.created_at DESC, t.id DESC
            LIMIT $1
          )
-         SELECT page.id, page.name, page.wanted_skills, page.created_at,
-                page.team_size_min, page.team_size_max, page.member_count,
-                (page.member_count >= page.team_size_min) AS is_complete,
-                p.display_name AS leader_name
+         SELECT page.*, (page.member_count >= page.team_size_min) AS is_complete
          FROM page
-         JOIN profiles p ON p.id = page.leader_id
          ORDER BY page.created_at DESC, page.id DESC`,
-        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null],
+        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null, query.timezone ?? null, req.userId],
       );
       const people = pool.query(
         `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
@@ -101,7 +107,9 @@ export default async function boardRoutes(app: FastifyInstance) {
     return { ok: true, commit: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.COMMIT_SHA ?? null };
   });
 
-  app.get('/api/metrics', async () => {
+  // In-process operational telemetry. Organizer-only: pool occupancy and
+  // per-route latency are operational details, not public information.
+  app.get('/api/metrics', { preHandler: requireOrganizer }, async () => {
     const { snapshot } = await import('../metrics.js');
     return snapshot();
   });

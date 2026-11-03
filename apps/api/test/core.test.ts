@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, test } from 'vitest';
-import { app, migrate, resetDb, makeUser, auth, idemKey, createTeam } from './helpers.js';
+import { app, migrate, resetDb, makeUser, makeEmailUser, auth, idemKey, createTeam } from './helpers.js';
 import { pool } from '../src/db.js';
 
 beforeAll(migrate);
@@ -348,7 +348,7 @@ describe('board, suggestions, metrics', () => {
     const top = s[0];
     expect(top.complementary_skill_names).toEqual(expect.arrayContaining(['node', 'postgres']));
     expect(top.reason).toContain('node');
-    expect(top.reason).toContain('same timezone');
+    expect(top.reason).toContain('same local hours');
     const sh = s.find((x: any) => x.id === shared.id);
     expect(sh.shared_skill_names).toEqual(['react']);
     expect(sh.reason).toContain('shares react');
@@ -364,12 +364,23 @@ describe('board, suggestions, metrics', () => {
     expect(res.json().suggestions.map((x: any) => x.id)).not.toContain(teamed.id);
   });
 
-  test('metrics endpoint reports request counts', async () => {
+  test('metrics endpoint reports request counts (organizer-only endpoint)', async () => {
     const u = await makeUser();
     await app.inject({ method: 'GET', url: '/api/board', headers: auth(u.token) });
-    const res = await app.inject({ method: 'GET', url: '/api/metrics' });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().routes['/api/board'].requests).toBeGreaterThan(0);
+    // anonymous and regular users are closed out
+    expect((await app.inject({ method: 'GET', url: '/api/metrics' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/api/metrics', headers: auth(u.token) })).statusCode).toBe(403);
+    // a verified allowlisted organizer reads the counters
+    const savedEnv = process.env.ORGANIZER_EMAILS;
+    process.env.ORGANIZER_EMAILS = 'metrics-org@test.dev';
+    try {
+      const org = await makeEmailUser('Metrics Org', 'metrics-org@test.dev');
+      const res = await app.inject({ method: 'GET', url: '/api/metrics', headers: auth(org.token) });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().routes['/api/board'].requests).toBeGreaterThan(0);
+    } finally {
+      if (savedEnv === undefined) delete process.env.ORGANIZER_EMAILS; else process.env.ORGANIZER_EMAILS = savedEnv;
+    }
   });
 });
 

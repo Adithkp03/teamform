@@ -24,7 +24,15 @@ function hash(value: unknown): string {
  *   - in_flight, stale (>60s) -> the retry takes over (original worker presumed dead)
  * Handler outcomes (including 4xx) are stored as the completed response, so a
  * replayed race-loser returns the same 409 instead of re-running.
+ * Stored responses are retained for 24 hours (see pruneIdempotencyKeys).
  */
+/** Retention: stored responses replay for 24 hours (Stripe keeps keys 24h).
+ *  Replays after that re-execute - the DB invariants still keep them correct.
+ *  Exported for direct testing. */
+export async function pruneIdempotencyKeys(): Promise<void> {
+  await pool.query(`DELETE FROM idempotency_keys WHERE updated_at < now() - interval '24 hours'`);
+}
+
 export function idempotent(
   endpoint: string,
   handler: (req: any) => Promise<HandlerResult>,
@@ -40,6 +48,9 @@ export function idempotent(
     if (key.length < 8 || key.length > 128) {
       throw errors.badRequest('Idempotency-Key must be 8-128 characters');
     }
+    // Bounded storage on the free DB: probabilistic self-prune (~2% of keyed
+    // calls); see pruneIdempotencyKeys for the 24h replay guarantee.
+    if (Math.random() < 0.02) pruneIdempotencyKeys().catch(() => {});
     const userId = req.userId as string;
     const paramsHash = hash({ endpoint, body: req.body });
 

@@ -16,10 +16,14 @@ jobs:
           body=$(curl -fsS --max-time 20 https://teamform-api.vercel.app/api/health)
           echo "$body"
           echo "$body" | grep -q '"ok":true'
-      - name: Metrics endpoint answers (pool + SSE telemetry present)
+      - name: Metrics endpoint is closed to anonymous callers (organizer-only)
         run: |
-          body=$(curl -fsS --max-time 20 https://teamform-api.vercel.app/api/metrics)
-          echo "$body" | head -c 400
-          echo "$body" | grep -q '"db_pool"'
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://teamform-api.vercel.app/api/metrics)
+          echo "metrics status: $code"
+          test "$code" = "401"
+      - name: API answers with the security-header policy
+        run: |
+          curl -fsS --max-time 20 -D - -o /dev/null https://teamform-api.vercel.app/api/health | grep -qi 'x-content-type-options: nosniff'
+          curl -fsS --max-time 20 -D - -o /dev/null https://teamform-api.vercel.app/api/health | grep -qi 'x-frame-options: DENY'
       - name: Web app serves
         run: curl -fsS --max-time 20 -o /dev/null https://teamform-web.vercel.app

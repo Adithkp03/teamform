@@ -9,7 +9,10 @@ import { parse } from '../util.js';
  * Teammate suggestions, ranked by an explained score:
  *   score = 2 * complementary_skills   (skills they have that you don't)
  *         + 1 * shared_skills          (common ground helps collaboration)
- *         + timezone_fit               (same offset = 2, within 2h = 1, else 0)
+ *         + timezone_fit               (same clock time = 2, clock-time within 2h = 1, else 0;
+ *           distance is circular on the 24h clock, so UTC-12 vs UTC+14 is 2h apart,
+ *           not 26h. Offsets are reconciled from the IANA zone name at profile
+ *           write, so DST drift is bounded by the user's last profile save.)
  * Every candidate in the response carries the score components so the ranking
  * is explainable, not a black box. Deterministic tie-break: most recently active.
  */
@@ -24,8 +27,10 @@ export default async function suggestionRoutes(app: FastifyInstance) {
            (SELECT count(*)::int FROM (SELECT unnest(p.skills) INTERSECT SELECT unnest(me.skills)) s) AS shared_skills,
            (SELECT coalesce(array_agg(x.skill), '{}') FROM (SELECT unnest(p.skills) AS skill EXCEPT SELECT unnest(me.skills)) x) AS complementary_skill_names,
            (SELECT coalesce(array_agg(y.skill), '{}') FROM (SELECT unnest(p.skills) AS skill INTERSECT SELECT unnest(me.skills)) y) AS shared_skill_names,
-           (CASE WHEN p.utc_offset_minutes = me.utc_offset_minutes THEN 2
-                 WHEN abs(p.utc_offset_minutes - me.utc_offset_minutes) <= 120 THEN 1
+           (CASE WHEN least((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440,
+                            1440 - ((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440)) = 0 THEN 2
+                 WHEN least((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440,
+                            1440 - ((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440)) <= 120 THEN 1
                  ELSE 0 END) AS timezone_fit
          FROM profiles p, me
          WHERE p.looking_for_team AND p.id <> $1
@@ -45,8 +50,8 @@ export default async function suggestionRoutes(app: FastifyInstance) {
       const shared: string[] = r.shared_skill_names ?? [];
       if (comp.length) parts.push(`adds ${shortList(comp)} that you don't have`);
       if (shared.length) parts.push(`shares ${shortList(shared)} with you`);
-      if (r.timezone_fit === 2) parts.push('same timezone as you');
-      else if (r.timezone_fit === 1) parts.push('timezone within 2 hours of yours');
+      if (r.timezone_fit === 2) parts.push('same local hours as you');
+      else if (r.timezone_fit === 1) parts.push('local time within 2 hours of yours');
       else parts.push('in a different timezone');
       return { ...r, reason: parts.join('; ') };
     });
@@ -71,7 +76,7 @@ export default async function suggestionRoutes(app: FastifyInstance) {
       }
     }
     return {
-      scoring: 'score = 2*complementary_skills + 1*shared_skills + timezone_fit (same tz=2, within 2h=1, else 0)',
+      scoring: 'score = 2*complementary_skills + 1*shared_skills + timezone_fit (same clock time=2, within 2h incl. UTC wraparound=1, else 0)',
       scoring_status: 'transparent heuristic - being validated against real join outcomes and feedback',
       suggestions,
     };

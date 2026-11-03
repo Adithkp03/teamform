@@ -143,8 +143,12 @@ describe('dev-login production refusal', () => {
   test('ALLOW_DEV_LOGIN=true fails the build in a production-like env', async () => {
     const prevDev = process.env.ALLOW_DEV_LOGIN;
     const prevVercel = process.env.VERCEL;
+    const prevCors = process.env.CORS_ORIGIN;
     process.env.ALLOW_DEV_LOGIN = 'true';
     process.env.VERCEL = '1';
+    // CORS_ORIGIN set so this test isolates the dev-login refusal (both are
+    // production boot refusals; CORS has its own test in security-defaults).
+    process.env.CORS_ORIGIN = 'https://teamform-web.vercel.app';
     try {
       // Route registration is async; the refusal surfaces when the app
       // boots (serverless cold start / listen), failing the deploy loudly.
@@ -153,6 +157,7 @@ describe('dev-login production refusal', () => {
     } finally {
       if (prevDev === undefined) delete process.env.ALLOW_DEV_LOGIN; else process.env.ALLOW_DEV_LOGIN = prevDev;
       if (prevVercel === undefined) delete process.env.VERCEL; else process.env.VERCEL = prevVercel;
+      if (prevCors === undefined) delete process.env.CORS_ORIGIN; else process.env.CORS_ORIGIN = prevCors;
     }
   });
 

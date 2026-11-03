@@ -4,6 +4,7 @@ import { api, newIdempotencyKey, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { subscribeBoardChanges } from '../realtime';
 import { useToast } from '../components/Toasts';
+import { useInvitePerson } from '../useInvite';
 
 type BoardData = { teams: any[]; people: any[]; next_teams_cursor: string | null; next_people_cursor: string | null };
 
@@ -28,7 +29,11 @@ export default function Board() {
   const [tab, setTab] = useState<'teams' | 'people'>('teams');
   const [pendingTeams, setPendingTeams] = useState<Record<string, 'sending' | 'sent'>>({});
   const joinKeyRef = useRef(newIdempotencyKey()); // one key per attempt; regenerated after each outcome
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [invitations, setInvitations] = useState<any[]>([]);
+  const [invBusy, setInvBusy] = useState<Record<string, boolean>>({});
+  // Sequence guard: only the newest board response may land, so a slow older
+  // reply can never overwrite fresher results (stale-response race fix).
+  const seqRef = useRef(0);
 
   const queryString = useCallback((extra?: Record<string, string>) => {
     const params = new URLSearchParams({ limit: '24' });
@@ -41,25 +46,56 @@ export default function Board() {
   }, [search, skillFilter, tzFilter, minSeats]);
 
   const refresh = useCallback(() => {
-    api(`/api/board?${queryString()}`, { token }).then(setBoard).catch((e) => toast(e.message, 'error'));
+    const seq = ++seqRef.current;
+    return api(`/api/board?${queryString()}`, { token })
+      .then((d) => { if (seq === seqRef.current) setBoard(d); })
+      .catch((e) => { if (seq === seqRef.current) toast(e.message, 'error'); });
   }, [token, queryString]);
 
-  // Server-side search: debounce typing, then re-query the whole board with
-  // the current filters. Filters are resent on every page load below.
+  const fetchInvitations = useCallback(() => {
+    api('/api/me/invitations', { token }).then((d) => setInvitations(d.invitations)).catch(() => {});
+  }, [token]);
+
+  // Server-side search: typing and filter changes re-query the whole board
+  // once, after a debounce (previously each change fired BOTH an immediate
+  // and a debounced request, and either response could land last).
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(refresh, 350);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    const t = setTimeout(refresh, 350);
+    return () => clearTimeout(t);
   }, [refresh]);
 
   useEffect(() => {
     api('/api/me', { token }).then((d) => setMe(d.profile)).catch(() => {});
   }, [token]);
 
+  // Live updates: one stable subscription per session; it always refetches
+  // with the CURRENT filters and reloads the invitation inbox (invitation
+  // events are invitee-private server-side).
+  const refreshRef = useRef(refresh);
+  const invRef = useRef(fetchInvitations);
+  useEffect(() => { refreshRef.current = refresh; }, [refresh]);
+  useEffect(() => { invRef.current = fetchInvitations; }, [fetchInvitations]);
   useEffect(() => {
-    refresh();
-    return subscribeBoardChanges(refresh, token);
-  }, [refresh, token]);
+    fetchInvitations();
+    return subscribeBoardChanges(() => { refreshRef.current(); invRef.current(); }, token);
+  }, [token, fetchInvitations]);
+
+  async function answerInvitation(invId: string, action: 'accept' | 'decline') {
+    setInvBusy((b) => ({ ...b, [invId]: true }));
+    try {
+      const res = await api(`/api/invitations/${invId}/${action}`, { method: 'POST', token, body: {} });
+      toast(action === 'accept' ? 'You joined the team.' : 'Invitation declined.');
+      setInvitations((list) => list.filter((i) => i.id !== invId));
+      refresh();
+      api('/api/me', { token }).then((d) => setMe(d.profile)).catch(() => {});
+      if (action === 'accept' && res?.team_id) navigate(`/team/${res.team_id}`);
+    } catch (e: any) {
+      toast(e.message, 'error');
+      fetchInvitations();
+    } finally {
+      setInvBusy((b) => ({ ...b, [invId]: false }));
+    }
+  }
 
   async function loadMore() {
     if (!board || loadingMore) return;
@@ -106,6 +142,19 @@ export default function Board() {
     }
   }
 
+  async function cancelRequest(requestId: string, teamId: string) {
+    setPendingTeams((p) => ({ ...p, [teamId]: 'sending' }));
+    try {
+      await api(`/api/requests/${requestId}`, { method: 'DELETE', token });
+      setPendingTeams((p) => { const n = { ...p }; delete n[teamId]; return n; });
+      toast('Request cancelled.');
+      refresh();
+    } catch (e: any) {
+      setPendingTeams((p) => ({ ...p, [teamId]: 'sent' }));
+      toast(e.message, 'error');
+    }
+  }
+
   async function requestJoin(teamId: string) {
     setPendingTeams((p) => ({ ...p, [teamId]: 'sending' }));
     try {
@@ -129,6 +178,7 @@ export default function Board() {
     }
   }
 
+  const { invite: invitePerson, states: inviteStates } = useInvitePerson(me?.my_team_id, () => { refresh(); });
   const mySkills: string[] = me?.skills ?? [];
   const myTz: string | undefined = me?.timezone;
 
@@ -200,6 +250,26 @@ export default function Board() {
         <p className="text-xs text-slate-400">Searches and filters apply across the entire board, not just loaded cards, and stay active as you load more.</p>
       </div>
 
+      {invitations.length > 0 && (
+        <section aria-label="Team invitations" className="mb-5 space-y-3">
+          <h2 className="font-semibold">Teams inviting you ({invitations.length})</h2>
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {invitations.map((inv) => (
+              <li key={inv.id} className="card border-l-4 border-l-accent">
+                <p className="font-semibold">{inv.team_name}</p>
+                <p className="text-xs text-slate-400">
+                  {inv.member_count}/{inv.team_size_max} members - invited by {inv.invited_by_name}
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <button className="btn-primary flex-1" disabled={!!invBusy[inv.id]} onClick={() => answerInvitation(inv.id, 'accept')}>Accept</button>
+                  <button className="btn-ghost" disabled={!!invBusy[inv.id]} onClick={() => answerInvitation(inv.id, 'decline')}>Decline</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <div role="tablist" aria-label="Board views" className="board-tabs">
         <button role="tab" aria-selected={tab === 'teams'} className={tab === 'teams' ? 'btn-primary' : 'btn-ghost'} onClick={() => setTab('teams')}>
           Teams looking ({board ? `${board.teams.length}${board.next_teams_cursor ? '+' : ''}` : '...'})
@@ -215,7 +285,7 @@ export default function Board() {
         <ul className="mt-5 grid gap-4 sm:grid-cols-2" aria-label="Teams looking for members">
           {board.teams.map((t) => {
             const reasons = teamMatchReasons(t);
-            const state = pendingTeams[t.id];
+            const state = pendingTeams[t.id] ?? (t.my_pending_request_id ? 'sent' : undefined);
             return (
             <li key={t.id} className="card team-card">
               <div className="mb-4 flex items-center justify-between"><span className="avatar" aria-hidden="true">{t.name.slice(0, 2).toUpperCase()}</span><span className="text-xs font-medium text-accent">Open for members</span></div>
@@ -239,6 +309,9 @@ export default function Board() {
                   <button className="btn-primary flex-1" onClick={() => requestJoin(t.id)} disabled={state === 'sending'}>
                     {state === 'sending' ? 'Sending...' : 'Request to join'}
                   </button>
+                )}
+                {state === 'sent' && t.my_pending_request_id && (
+                  <button className="btn-ghost" aria-label={`Cancel your join request to ${t.name}`} onClick={() => cancelRequest(t.my_pending_request_id, t.id)}>Cancel</button>
                 )}
                 <Link className="btn-ghost" to={`/team/${t.id}`}>View</Link>
               </div>
@@ -268,6 +341,17 @@ export default function Board() {
               <p className="mt-2 flex flex-wrap gap-1">{(p.skills ?? []).map((s: string) => <span key={s} className="badge">{s}</span>)}</p>
               {reasons.length > 0 && (
                 <p className="mt-2 text-xs text-emerald-700" aria-label="Why this person matches you">{reasons.join(' · ')}</p>
+              )}
+              {me?.my_team_id && (
+                <div className="mt-3">
+                  {inviteStates[p.id] === 'sent' ? (
+                    <span className="btn-ghost w-full text-center" role="status">Invited - waiting for their answer</span>
+                  ) : (
+                    <button className="btn-primary w-full" onClick={() => invitePerson(p.id)} disabled={inviteStates[p.id] === 'sending'}>
+                      {inviteStates[p.id] === 'sending' ? 'Inviting...' : 'Invite to your team'}
+                    </button>
+                  )}
+                </div>
               )}
             </li>
           ); })}

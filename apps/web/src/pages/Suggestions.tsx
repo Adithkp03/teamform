@@ -2,16 +2,20 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { useToast } from '../components/Toasts';
+import { useInvitePerson } from '../useInvite';
 
 export default function Suggestions() {
   const { token } = useAuth();
   const toast = useToast();
   const [data, setData] = useState<any>(null);
   const [votes, setVotes] = useState<Record<string, boolean>>({});
+  const [me, setMe] = useState<any>(null);
+  const { invite, states: inviteStates } = useInvitePerson(me?.my_team_id);
 
   useEffect(() => {
     localStorage.setItem('tf_seen_suggestions', '1');
     api('/api/suggestions', { token }).then(setData).catch((e) => toast(e.message, 'error'));
+    api('/api/me', { token }).then((d) => setMe(d.profile)).catch(() => {});
   }, [token]);
 
   async function vote(candidateId: string, useful: boolean) {
@@ -60,6 +64,20 @@ export default function Suggestions() {
               <div><dt>Shared skills</dt><dd>{s.shared_skills} x1</dd></div>
               <div><dt>Timezone fit</dt><dd>{s.timezone_fit}</dd></div>
             </dl>
+            {me?.my_team_id && (
+              <div className="mt-3">
+                {inviteStates[s.id] === 'sent' ? (
+                  <span className="btn-ghost w-full text-center" role="status">Invited - waiting for their answer</span>
+                ) : (
+                  <button className="btn-primary w-full" onClick={() => invite(s.id)} disabled={inviteStates[s.id] === 'sending'}>
+                    {inviteStates[s.id] === 'sending' ? 'Inviting...' : `Invite ${s.display_name.split(' ')[0]} to your team`}
+                  </button>
+                )}
+              </div>
+            )}
+            {!me?.my_team_id && (
+              <p className="mt-3 text-xs text-slate-400">Start or join a team to invite them to it.</p>
+            )}
             <div className="mt-3 flex items-center gap-2 border-t border-line pt-2" role="group" aria-label={`Was the suggestion ${s.display_name} useful?`}>
               <span className="text-xs text-slate-400">Useful?</span>
               <button

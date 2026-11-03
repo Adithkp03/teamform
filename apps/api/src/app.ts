@@ -4,6 +4,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { ApiError } from './errors.js';
 import { record } from './metrics.js';
+import { prodLike } from './firebase.js';
 import authRoutes from './routes/auth.js';
 import teamRoutes from './routes/teams.js';
 import boardRoutes from './routes/board.js';
@@ -16,10 +17,32 @@ export function buildApp(opts: { logger?: boolean } = {}) {
   // logs, so a user report can be tied to one exact failing request.
   const app = Fastify({ logger: opts.logger ?? false, genReqId: () => crypto.randomUUID() });
 
-  app.register(cors, { origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : true });
+  // CORS fails closed: in production-like environments the allowed origins
+  // MUST be configured explicitly (CORS_ORIGIN, comma-separated); an unset
+  // variable refuses to boot rather than reflecting every origin with
+  // credentials. Local/dev defaults cover vite dev and the e2e preview ports;
+  // requests without an Origin header (server-to-server, curl, health checks)
+  // are unaffected either way.
+  const corsOrigins = (process.env.CORS_ORIGIN ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (prodLike() && corsOrigins.length === 0) {
+    throw new Error('CORS_ORIGIN is not set: refusing to boot with an open cross-origin policy in a production-like environment');
+  }
+  app.register(cors, {
+    origin: corsOrigins.length
+      ? corsOrigins
+      : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3101', 'http://127.0.0.1:3101'],
+  });
 
   app.addHook('onSend', (req, reply, payload, done) => {
     reply.header('x-request-id', req.id);
+    // Deliberate security-header policy (the API serves JSON only): no
+    // framing, no content sniffing, no referrer leakage, no resource loading.
+    // The web app's CSP is delivered with the static host (vercel.json /
+    // nginx.conf) where script/connect needs are known.
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('x-frame-options', 'DENY');
+    reply.header('referrer-policy', 'no-referrer');
+    reply.header('content-security-policy', "default-src 'none'; frame-ancestors 'none'");
     done();
   });
 

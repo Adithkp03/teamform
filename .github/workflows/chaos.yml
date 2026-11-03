@@ -9,7 +9,13 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - name: Kill the API mid-join-storm, then check database invariants
-        run: bash scripts/chaos.sh 2>&1 | tee /tmp/chaos.log
+        # pipefail is load-bearing: without it the step exit code is tee's
+        # (always 0) and a failing chaos.sh - including a compose build
+        # failure - passes vacuously. This masked a broken compose build for
+        # every run until an external review caught it (2026-11-03).
+        run: |
+          set -o pipefail
+          bash scripts/chaos.sh 2>&1 | tee /tmp/chaos.log
       - name: Publish invariant results
         if: always()
         run: |

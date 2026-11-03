@@ -14,20 +14,34 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
   api:
-    build: ./apps/api
+    build:
+      context: .            # repo root: the Dockerfile COPYs db/ and apps/api/
+      dockerfile: apps/api/Dockerfile
     environment:
       DATABASE_URL: postgres://postgres:postgres@db:5432/teamform
       JWT_SECRET: dev-secret-change-me
       ALLOW_DEV_LOGIN: "true"
+      CORS_ORIGIN: "http://localhost:5173"
       PORT: "3000"
     ports: ["3000:3000"]
     depends_on:
       db:
         condition: service_healthy
-    command: sh -c "node /app/db/migrate.mjs && node /app/apps/api/src/server.js"
+    # No command override: the image CMD migrates, then runs the real
+    # TypeScript entrypoint (npx tsx apps/api/src/server.ts).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health >/dev/null 2>&1 || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
   web:
-    build: ./apps/web
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
     ports: ["5173:80"]
-    depends_on: [api]
+    depends_on:
+      api:
+        condition: service_healthy
 volumes:
   pgdata:

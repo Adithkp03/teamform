@@ -45,6 +45,7 @@ test('full team-formation flow end to end', async ({ browser }) => {
 
   // A (leader) leaves: leadership passes to B (earliest joiner)
   await A.getByRole('button', { name: 'Leave team' }).click();
+  await A.getByRole('button', { name: 'Confirm leave?' }).click();
   await B.reload();
   const bRow = B.locator('li', { hasText: 'Flow B' });
   await expect(bRow.getByText('leader')).toBeVisible();
@@ -53,11 +54,13 @@ test('full team-formation flow end to end', async ({ browser }) => {
   // Wait for each leave to COMMIT before navigating (navigation aborts the
   // in-flight request and the team would survive).
   await B.getByRole('button', { name: 'Leave team' }).click();
+  await B.getByRole('button', { name: 'Confirm leave?' }).click();
   await expect(B.getByText('You left the team')).toBeVisible();
   await C.goto('/board');
   await C.getByRole('link', { name: 'Flow Team' }).click();
   await expect(C).toHaveURL(/\/team\//);
   await C.getByRole('button', { name: 'Leave team' }).click();
+  await C.getByRole('button', { name: 'Confirm leave?' }).click();
   await expect(C.getByText('You left the team')).toBeVisible();
   await C.goto('/board');
   // the deleted team disappears (other specs share the database, so assert

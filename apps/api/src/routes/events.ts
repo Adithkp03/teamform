@@ -88,6 +88,10 @@ export default async function eventRoutes(app: FastifyInstance) {
           if (payload.t === 'join_requests') {
             if (!payload.team || (await leaderOf(payload.team)) !== userId) return;
           }
+          if (payload.t === 'team_invitations') {
+            const { rows: inv } = await client.query('SELECT user_id FROM team_invitations WHERE id = $1', [payload.id]);
+            if (inv[0]?.user_id !== userId) return;
+          }
           reply.raw.write(`event: change\ndata: ${msg.payload}\n\n`);
         })().catch(() => {});
       };
@@ -183,8 +187,9 @@ export default async function eventRoutes(app: FastifyInstance) {
          ORDER BY dispatched_seq LIMIT 2000`, [minCursor.toString()]);
       if (rows.length === 0) return;
 
-      // 3) One leadership lookup for the whole fleet: join_requests events
-      //    stay leader-private, evaluated against CURRENT leadership.
+      // 3) One leadership lookup + one invitee lookup for the whole fleet:
+      //    join_requests events stay leader-private (CURRENT leadership),
+      //    team_invitations events stay invitee-private.
       const userIds = [...new Set([...clients].filter(c => !c.closed).map(c => c.userId))];
       const { rows: ledRows } = await pool.query(
         'SELECT id, leader_id FROM teams WHERE leader_id = ANY($1::uuid[])', [userIds]);
@@ -192,6 +197,17 @@ export default async function eventRoutes(app: FastifyInstance) {
       for (const r of ledRows) {
         if (!ledByUser.has(r.leader_id)) ledByUser.set(r.leader_id, new Set());
         ledByUser.get(r.leader_id)!.add(r.id);
+      }
+
+      // One batched invitee lookup for the whole fleet: team_invitations
+      // events stay invitee-private. A deleted invitation (team removed)
+      // resolves to nobody and is skipped.
+      const invIds = rows.filter((r: any) => r.t === 'team_invitations').map((r: any) => r.row_id);
+      const inviteeOf = new Map<string, string>();
+      if (invIds.length) {
+        const { rows: invRows } = await pool.query(
+          'SELECT id, user_id FROM team_invitations WHERE id = ANY($1::uuid[])', [invIds]);
+        for (const r of invRows) inviteeOf.set(r.id, r.user_id);
       }
 
       // 4) Per client: filter in memory, write, advance its cursor.
@@ -203,6 +219,7 @@ export default async function eventRoutes(app: FastifyInstance) {
             const seq = BigInt(r.dispatched_seq);
             if (seq <= c.cursor) continue;
             if (r.t === 'join_requests' && !led.has(r.team_id)) { c.cursor = seq; continue; }
+            if (r.t === 'team_invitations' && inviteeOf.get(r.row_id) !== c.userId) { c.cursor = seq; continue; }
             const payload = JSON.stringify({ t: r.t, op: r.op, id: r.row_id, team: r.team_id });
             c.reply.raw.write(`id: ${r.dispatched_seq}\nevent: change\ndata: ${payload}\n\n`);
             c.cursor = seq;

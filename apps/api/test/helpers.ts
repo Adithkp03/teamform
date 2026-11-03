@@ -19,7 +19,7 @@ export function migrate() {
 
 export async function resetDb(opts: { min?: number; max?: number } = {}) {
   await pool.query(
-    `TRUNCATE join_requests, team_members, teams, profiles, idempotency_keys, audit_log, rate_limits, hackathons, domain_events, auth_refresh_tokens, auth_action_tokens, suggestion_impressions, suggestion_feedback RESTART IDENTITY CASCADE`,
+    `TRUNCATE join_requests, team_invitations, team_members, teams, profiles, idempotency_keys, audit_log, rate_limits, hackathons, domain_events, auth_refresh_tokens, auth_action_tokens, suggestion_impressions, suggestion_feedback RESTART IDENTITY CASCADE`,
   );
   await pool.query(
     `INSERT INTO hackathons (slug, name, team_size_min, team_size_max) VALUES ('ps1', 'Test Hackathon', $1, $2)`,

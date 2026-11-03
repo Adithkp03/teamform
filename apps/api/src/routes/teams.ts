@@ -275,6 +275,197 @@ export default async function teamRoutes(app: FastifyInstance) {
     });
   }));
 
+
+  // ---- Cancel your own pending join request (requester journey) ----
+  app.delete('/api/requests/:id', { preHandler: authenticate }, respond(async (req: any) => {
+    parse(uuidParam, req.params.id);
+    return withTx(async (c) => {
+      const { rows } = await c.query(
+        `UPDATE join_requests SET status = 'cancelled', decided_at = now(), decided_by = $2
+         WHERE id = $1 AND user_id = $2 AND status = 'pending' RETURNING team_id, hackathon_id`,
+        [req.params.id, req.userId],
+      );
+      if (!rows.length) throw errors.notFound('Pending request not found (it may already be decided)');
+      await audit(c, rows[0].hackathon_id, rows[0].team_id, req.userId, 'join_request_cancelled', { request_id: req.params.id, reason: 'requester_cancelled' });
+      return { status: 200, body: { ok: true } };
+    });
+  }));
+
+  // ---- Team invitations: the outbound half of the connect journey ----
+  // Any member can invite a teamless, looking person. Accepting takes a real
+  // seat under the team row lock, exactly like accepting a join request.
+  const inviteSchema = z.object({ user_id: z.string().uuid() });
+
+  app.post('/api/teams/:id/invitations', { preHandler: authenticate }, idempotent('create_invitation', async (req: any) => {
+    await rateLimit(`invite:${req.userId}`, 10, 60);
+    const teamId = parse(uuidParam, req.params.id);
+    const body = parse(inviteSchema, req.body);
+    if (body.user_id === req.userId) throw errors.badRequest('You cannot invite yourself');
+    return withTx(async (c) => {
+      const { rows } = await c.query(
+        `SELECT t.id, t.hackathon_id, h.team_size_max,
+                (SELECT count(*)::int FROM team_members tm WHERE tm.team_id = t.id) AS member_count,
+                EXISTS(SELECT 1 FROM team_members tm WHERE tm.team_id = t.id AND tm.user_id = $2) AS inviter_is_member
+         FROM teams t JOIN hackathons h ON h.id = t.hackathon_id WHERE t.id = $1`,
+        [teamId, req.userId],
+      );
+      const team = rows[0];
+      if (!team) throw errors.notFound('Team not found');
+      if (!team.inviter_is_member) throw errors.forbidden('Only team members can invite people');
+      if (team.member_count >= team.team_size_max) throw errors.conflict('team_full', 'This team is full');
+      const target = await c.query(
+        `SELECT p.id, p.looking_for_team,
+                EXISTS(SELECT 1 FROM team_members tm WHERE tm.user_id = p.id) AS on_a_team,
+                EXISTS(SELECT 1 FROM join_requests jr WHERE jr.team_id = $2 AND jr.user_id = p.id AND jr.status = 'pending') AS already_requested
+         FROM profiles p WHERE p.id = $1`,
+        [body.user_id, teamId],
+      );
+      const t = target.rows[0];
+      if (!t || !t.looking_for_team) throw errors.notFound('That person is not looking for a team');
+      if (t.on_a_team) throw errors.conflict('already_in_team', 'That person is already on a team');
+      if (t.already_requested) throw errors.conflict('already_requested', 'They already asked to join - accept their request instead');
+      try {
+        const r = await c.query(
+          `INSERT INTO team_invitations (team_id, hackathon_id, user_id, invited_by) VALUES ($1, $2, $3, $4) RETURNING *`,
+          [teamId, team.hackathon_id, body.user_id, req.userId],
+        );
+        await audit(c, team.hackathon_id, teamId, req.userId, 'member_invited', { invitation_id: r.rows[0].id, user_id: body.user_id });
+        return { status: 201, body: { invitation: r.rows[0] } };
+      } catch (e: any) {
+        if (e.code === '23505') throw errors.conflict('invitation_already_pending', 'Your team already invited this person');
+        throw e;
+      }
+    });
+  }));
+
+  // Members see their team's pending invitations (who has not answered yet).
+  app.get('/api/teams/:id/invitations', { preHandler: authenticate }, async (req: any) => {
+    const teamId = parse(uuidParam, req.params.id);
+    const member = await pool.query(`SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`, [teamId, req.userId]);
+    if (!member.rowCount) throw errors.forbidden('Only team members can see invitations');
+    const { rows } = await pool.query(
+      `SELECT ti.id, ti.user_id, ti.created_at, ti.invited_by, p.display_name, p.skills, p.timezone, ip.display_name AS invited_by_name
+       FROM team_invitations ti
+       JOIN profiles p ON p.id = ti.user_id
+       JOIN profiles ip ON ip.id = ti.invited_by
+       WHERE ti.team_id = $1 AND ti.status = 'pending' ORDER BY ti.created_at`,
+      [teamId],
+    );
+    return { invitations: rows };
+  });
+
+  // The invitee's inbox: pending invitations with enough context to decide.
+  app.get('/api/me/invitations', { preHandler: authenticate }, async (req: any) => {
+    const { rows } = await pool.query(
+      `SELECT ti.id, ti.team_id, ti.created_at, t.name AS team_name,
+              (SELECT count(*)::int FROM team_members tm WHERE tm.team_id = t.id) AS member_count,
+              h.team_size_max, h.team_size_min,
+              ip.display_name AS invited_by_name
+       FROM team_invitations ti
+       JOIN teams t ON t.id = ti.team_id
+       JOIN hackathons h ON h.id = ti.hackathon_id
+       JOIN profiles ip ON ip.id = ti.invited_by
+       WHERE ti.user_id = $1 AND ti.status = 'pending' ORDER BY ti.created_at`,
+      [req.userId],
+    );
+    return { invitations: rows };
+  });
+
+  app.post('/api/invitations/:id/accept', { preHandler: authenticate }, respond(async (req: any) => {
+    parse(uuidParam, req.params.id);
+    return withTx(async (c) => {
+      // Lock invitation row AND team row: concurrent accepts for the same team
+      // serialize on the team row, so the seat check cannot race (same rule
+      // as join-request accept).
+      const { rows } = await c.query(
+        `SELECT ti.*, h.team_size_max FROM team_invitations ti
+         JOIN teams t ON t.id = ti.team_id JOIN hackathons h ON h.id = ti.hackathon_id
+         WHERE ti.id = $1 FOR UPDATE OF ti, t`,
+        [req.params.id],
+      );
+      const inv = rows[0];
+      if (!inv) throw errors.notFound('Invitation not found');
+      if (inv.user_id !== req.userId) throw errors.forbidden('Only the invited person can accept');
+      if (inv.status !== 'pending') throw errors.conflict('invitation_already_decided', `Invitation is already ${inv.status}`);
+      const member = await c.query(`SELECT 1 FROM team_members WHERE hackathon_id = $1 AND user_id = $2`, [inv.hackathon_id, req.userId]);
+      if (member.rowCount) {
+        // Stale invitation: cancel it and COMMIT (a thrown conflict would roll
+        // the update back); the invitee still gets the 409 body.
+        await c.query(`UPDATE team_invitations SET status = 'cancelled', decided_at = now(), decided_by = $2 WHERE id = $1`, [inv.id, req.userId]);
+        await audit(c, inv.hackathon_id, inv.team_id, req.userId, 'invitation_auto_cancelled', { invitation_id: inv.id, reason: 'invitee_already_in_team' });
+        return { status: 409, body: { error: { code: 'already_in_team', message: 'You are already on a team; this invitation was cancelled' } } };
+      }
+      const count = await c.query(`SELECT count(*)::int AS n FROM team_members WHERE team_id = $1`, [inv.team_id]);
+      if (count.rows[0].n >= inv.team_size_max) {
+        // The seat is gone: the invitation can never be honored. Cancel it and
+        // COMMIT, then report 409 so the invitee sees a truthful outcome.
+        await c.query(`UPDATE team_invitations SET status = 'cancelled', decided_at = now(), decided_by = $2 WHERE id = $1`, [inv.id, req.userId]);
+        await audit(c, inv.hackathon_id, inv.team_id, req.userId, 'invitation_auto_cancelled', { invitation_id: inv.id, reason: 'team_full' });
+        return { status: 409, body: { error: { code: 'team_full', message: 'This team just filled up - the invitation was cancelled' } } };
+      }
+      await c.query(`UPDATE team_invitations SET status = 'accepted', decided_at = now(), decided_by = $2 WHERE id = $1`, [inv.id, req.userId]);
+      await c.query(`INSERT INTO team_members (team_id, hackathon_id, user_id, role) VALUES ($1, $2, $3, 'member')`, [inv.team_id, inv.hackathon_id, req.userId]);
+      // Membership acquired: every other pending request AND invitation from
+      // this person is cancelled, each audited (same rule as join paths).
+      const cancelledReqs = await c.query(
+        `UPDATE join_requests SET status = 'cancelled', decided_at = now()
+         WHERE user_id = $1 AND hackathon_id = $2 AND status = 'pending' RETURNING id, team_id`,
+        [req.userId, inv.hackathon_id],
+      );
+      for (const r of cancelledReqs.rows) {
+        await audit(c, inv.hackathon_id, r.team_id, req.userId, 'join_request_auto_cancelled', { request_id: r.id, reason: 'joined_another_team' });
+      }
+      const cancelledInvs = await c.query(
+        `UPDATE team_invitations SET status = 'cancelled', decided_at = now()
+         WHERE user_id = $1 AND hackathon_id = $2 AND status = 'pending' RETURNING id, team_id`,
+        [req.userId, inv.hackathon_id],
+      );
+      for (const r of cancelledInvs.rows) {
+        await audit(c, inv.hackathon_id, r.team_id, req.userId, 'invitation_auto_cancelled', { invitation_id: r.id, reason: 'joined_another_team' });
+      }
+      await audit(c, inv.hackathon_id, inv.team_id, req.userId, 'member_joined', { via: 'invitation', invitation_id: inv.id });
+      return { status: 200, body: { ok: true, team_id: inv.team_id } };
+    });
+  }));
+
+  app.post('/api/invitations/:id/decline', { preHandler: authenticate }, respond(async (req: any) => {
+    parse(uuidParam, req.params.id);
+    return withTx(async (c) => {
+      const { rows } = await c.query(
+        `UPDATE team_invitations SET status = 'declined', decided_at = now(), decided_by = $2
+         WHERE id = $1 AND user_id = $2 AND status = 'pending' RETURNING team_id, hackathon_id`,
+        [req.params.id, req.userId],
+      );
+      if (!rows.length) {
+        const exists = await c.query(`SELECT user_id, status FROM team_invitations WHERE id = $1`, [req.params.id]);
+        if (!exists.rows.length) throw errors.notFound('Invitation not found');
+        if (exists.rows[0].user_id !== req.userId) throw errors.forbidden('Only the invited person can decline');
+        throw errors.conflict('invitation_already_decided', `Invitation is already ${exists.rows[0].status}`);
+      }
+      await audit(c, rows[0].hackathon_id, rows[0].team_id, req.userId, 'invitation_declined', { invitation_id: req.params.id });
+      return { status: 200, body: { ok: true } };
+    });
+  }));
+
+  // Withdraw a pending invitation: the member who sent it or the team leader.
+  app.delete('/api/invitations/:id', { preHandler: authenticate }, respond(async (req: any) => {
+    parse(uuidParam, req.params.id);
+    return withTx(async (c) => {
+      const { rows } = await c.query(
+        `SELECT ti.*, t.leader_id FROM team_invitations ti JOIN teams t ON t.id = ti.team_id
+         WHERE ti.id = $1 FOR UPDATE OF ti`,
+        [req.params.id],
+      );
+      const inv = rows[0];
+      if (!inv) throw errors.notFound('Invitation not found');
+      if (inv.invited_by !== req.userId && inv.leader_id !== req.userId) throw errors.forbidden('Only the inviter or the team leader can withdraw an invitation');
+      if (inv.status !== 'pending') throw errors.conflict('invitation_already_decided', `Invitation is already ${inv.status}`);
+      await c.query(`UPDATE team_invitations SET status = 'cancelled', decided_at = now(), decided_by = $2 WHERE id = $1`, [inv.id, req.userId]);
+      await audit(c, inv.hackathon_id, inv.team_id, req.userId, 'invitation_cancelled', { invitation_id: inv.id, user_id: inv.user_id, reason: 'withdrawn' });
+      return { status: 200, body: { ok: true } };
+    });
+  }));
+
   app.get('/api/teams/:id/audit', { preHandler: authenticate }, async (req: any) => {
     parse(uuidParam, req.params.id);
     const member = await pool.query(`SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`, [req.params.id, req.userId]);
