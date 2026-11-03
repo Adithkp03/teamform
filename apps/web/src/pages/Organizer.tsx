@@ -94,7 +94,7 @@ export default function Organizer() {
     // the Authorization header never lands in a URL. One request only, and the
     // status is checked before the blob is saved (an error page is not a CSV).
     try {
-      const r = await fetch(`${(import.meta.env.VITE_API_URL as string | undefined) ?? ''}/api/organizer/audit/export?${params}`, {
+      const r = await fetch(`/api/organizer/audit/export?${params}`, {
         headers: { authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`Export failed (${r.status})`);

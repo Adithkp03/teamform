@@ -20,6 +20,7 @@ const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
 const LEGACY_SESSION_SUNSET = new Date(process.env.LEGACY_SESSION_SUNSET ?? '2026-11-10T00:00:00Z');
 const legacySessionsExpired = () => Date.now() >= LEGACY_SESSION_SUNSET.getTime();
 import { parse } from '../util.js';
+import { parseRefreshCookie, setRefreshCookie, clearRefreshCookie, assertCookieOrigin } from '../session-cookie.js';
 import { errors } from '../errors.js';
 import { sendAuthMail, authMailUrl } from '../mailer.js';
 
@@ -55,7 +56,7 @@ export default async function authRoutes(app: FastifyInstance) {
     });
   }
 
-  app.post('/api/auth/signup', async (req) => {
+  app.post('/api/auth/signup', async (req, reply) => {
     const body = parse(credSchema.extend({ display_name: z.string().trim().min(1).max(80) }), req.body);
     await rateLimit(`auth:${req.ip}`, 10, 60);
     const password_hash = await bcrypt.hash(body.password, 10);
@@ -72,10 +73,11 @@ export default async function authRoutes(app: FastifyInstance) {
     const verifyToken = await issueActionToken(id, 'verify');
     await sendAuthMail(body.email.toLowerCase(), 'verify', authMailUrl('verify', verifyToken));
     const session = await issueRefreshToken(id);
-    return { token: signToken(id, session.familyId), refresh_token: session.token, user_id: id };
+    setRefreshCookie(reply, session.token);
+    return { token: signToken(id, session.familyId), refresh_token: session.token, user_id: id, cookie_set: true };
   });
 
-  app.post('/api/auth/login', async (req) => {
+  app.post('/api/auth/login', async (req, reply) => {
     const body = parse(credSchema, req.body);
     await rateLimit(`auth:${req.ip}`, 10, 60);
     const { rows } = await pool.query(
@@ -87,7 +89,8 @@ export default async function authRoutes(app: FastifyInstance) {
       throw errors.unauthorized();
     }
     const session = await issueRefreshToken(rows[0].id);
-    return { token: signToken(rows[0].id, session.familyId), refresh_token: session.token, user_id: rows[0].id };
+    setRefreshCookie(reply, session.token);
+    return { token: signToken(rows[0].id, session.familyId), refresh_token: session.token, user_id: rows[0].id, cookie_set: true };
   });
 
   // Firebase sign-in: the client authenticates with Firebase (email +
@@ -98,7 +101,7 @@ export default async function authRoutes(app: FastifyInstance) {
   // (password reset/change/disable) enforceable at app-token rotation.
   // Verification status comes from the verified token server-side, never
   // from client-reported state.
-  app.post('/api/auth/firebase', async (req) => {
+  app.post('/api/auth/firebase', async (req, reply) => {
     const body = parse(z.object({
       id_token: z.string().min(1).max(8192),
       firebase_refresh_token: z.string().min(1).max(4096),
@@ -182,7 +185,8 @@ export default async function authRoutes(app: FastifyInstance) {
       `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
       [encryptRefreshToken(bound.refreshToken), session.id],
     );
-    return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId };
+    setRefreshCookie(reply, session.token);
+    return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId, cookie_set: true };
   });
 
   // Claim a legacy password-era profile onto a verified Firebase identity.
@@ -193,7 +197,7 @@ export default async function authRoutes(app: FastifyInstance) {
   // refresh token matches. On success the profile keeps its id, teams and
   // roles, its password is cleared, all prior sessions are revoked, and a
   // fresh Firebase-backed session family is issued.
-  app.post('/api/auth/firebase/claim', async (req) => {
+  app.post('/api/auth/firebase/claim', async (req, reply) => {
     const body = parse(z.object({
       id_token: z.string().min(1).max(8192),
       firebase_refresh_token: z.string().min(1).max(4096),
@@ -294,15 +298,23 @@ export default async function authRoutes(app: FastifyInstance) {
       `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
       [encryptRefreshToken(bound.refreshToken), session.id],
     );
-    return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId };
+    setRefreshCookie(reply, session.token);
+    return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId, cookie_set: true };
   });
 
   // Rotation issues a new access token + refresh token and revokes the old
   // refresh token. Presenting an already-rotated token revokes ALL of the
   // user's sessions (replay detection).
-  app.post('/api/auth/refresh', async (req) => {
-    const body = parse(z.object({ refresh_token: z.string().min(1).max(128) }), req.body);
+  app.post('/api/auth/refresh', async (req, reply) => {
+    const body = parse(z.object({ refresh_token: z.string().min(1).max(128).optional() }), req.body ?? {});
     await rateLimit(`auth:${req.ip}`, 30, 60);
+    // Dual mode: an explicit body token (legacy clients, CLI, tests) wins;
+    // otherwise the HttpOnly session cookie authenticates. Cookie-based use
+    // requires an allowed Origin - CSRF defense-in-depth on top of Lax.
+    const cookieToken = parseRefreshCookie(req.headers.cookie as string | undefined);
+    if (!body.refresh_token && cookieToken) assertCookieOrigin(req);
+    const presentedToken = body.refresh_token ?? cookieToken;
+    if (!presentedToken) throw errors.unauthorized();
     // Firebase-side revocation enforcement, checked BEFORE rotating so a
     // failure leaves the presented token (and family) untouched and the
     // client can retry. Every Firebase-exchanged session family carries the
@@ -321,7 +333,7 @@ export default async function authRoutes(app: FastifyInstance) {
     // are refused (the claim flow converts them beforehand).
     const presented = await pool.query(
       `SELECT user_id, COALESCE(family_id, id) AS fam FROM auth_refresh_tokens WHERE token_hash = $1 AND revoked_at IS NULL`,
-      [hashToken(body.refresh_token)],
+      [hashToken(presentedToken)],
     );
     if (presented.rows.length) {
       const famId = presented.rows[0].fam;
@@ -354,16 +366,25 @@ export default async function authRoutes(app: FastifyInstance) {
         throw errors.unauthorized();
       }
     }
-    const { userId, token, familyId } = await rotateRefreshToken(body.refresh_token);
-    return { token: signToken(userId, familyId), refresh_token: token, user_id: userId };
+    const { userId, token, familyId } = await rotateRefreshToken(presentedToken);
+    setRefreshCookie(reply, token);
+    return { token: signToken(userId, familyId), refresh_token: token, user_id: userId, cookie_set: true };
   });
 
   // Logout revokes the refresh session. The current access token remains
   // valid until its short expiry by design (documented trade-off).
-  app.post('/api/auth/logout', async (req) => {
-    const body = parse(z.object({ refresh_token: z.string().min(1).max(128) }), req.body);
+  app.post('/api/auth/logout', async (req, reply) => {
+    const body = parse(z.object({ refresh_token: z.string().min(1).max(128).optional() }), req.body ?? {});
     await rateLimit(`auth:${req.ip}`, 30, 60);
-    await revokeRefreshToken(body.refresh_token);
+    // Revoke every presented credential: a body token (legacy clients) and
+    // the session cookie. They usually name one family, but right after a
+    // client upgrade they can briefly diverge - both must die, and the
+    // cookie is always cleared so the browser stops presenting it.
+    const cookieToken = parseRefreshCookie(req.headers.cookie as string | undefined);
+    if (cookieToken) assertCookieOrigin(req);
+    if (body.refresh_token) await revokeRefreshToken(body.refresh_token);
+    if (cookieToken && cookieToken !== body.refresh_token) await revokeRefreshToken(cookieToken);
+    clearRefreshCookie(reply);
     return { ok: true };
   });
 

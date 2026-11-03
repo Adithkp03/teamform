@@ -28,7 +28,7 @@ export function subscribeConnectionState(cb: (s: ConnState) => void): () => void
 }
 
 export function subscribeBoardChanges(onChange: () => void, token: string | null): () => void {
-  const apiUrl = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
+  const apiUrl = ''; // same-origin (web host /api rewrite; vite proxy locally)
   if (!token) {
     sseActive = false;
     setConnState('polling');

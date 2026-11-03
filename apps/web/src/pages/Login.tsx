@@ -4,7 +4,7 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { useToast } from '../components/Toasts';
 import {
-  firebaseSignIn, firebaseSignUp, firebaseSendReset, firebaseResendVerification, firebaseTokens,
+  firebaseSignIn, firebaseSignUp, firebaseSendReset, firebaseResendVerification, firebaseTokens, firebaseSignOut,
 } from '../firebaseClient';
 
 // Dev login tab only for local builds (VITE_SHOW_DEV_LOGIN=true); production never shows it.
@@ -50,7 +50,11 @@ export default function Login() {
       method: 'POST',
       body: { id_token: idToken, firebase_refresh_token: refreshToken, display_name: displayName },
     });
-    login(res.token, res.user_id, res.refresh_token);
+    // Cookie-backed sessions are never written to localStorage; an older
+    // server (rollout window) still needs the body token stored.
+    login(res.token, res.user_id, res.cookie_set ? undefined : res.refresh_token);
+    // The app session is established: drop the Firebase browser credential.
+    firebaseSignOut().catch(() => {});
     navigate('/profile');
   }
 
@@ -71,7 +75,7 @@ export default function Login() {
       }
       if (mode === 'dev') {
         const res = await api('/api/auth/dev-login', { method: 'POST', body: { display_name: name || 'Dev User' } });
-        login(res.token, res.user_id, res.refresh_token);
+        login(res.token, res.user_id, res.cookie_set ? undefined : res.refresh_token);
         navigate('/profile');
         return;
       }
@@ -87,12 +91,16 @@ export default function Login() {
           },
         });
         toast('Your existing CrewForge account and teams are migrated.');
-        login(res.token, res.user_id, res.refresh_token);
+        login(res.token, res.user_id, res.cookie_set ? undefined : res.refresh_token);
+        firebaseSignOut().catch(() => {});
         navigate('/profile');
         return;
       }
       if (mode === 'signup') {
         await firebaseSignUp(email, password);
+        // Verification arrives by email and sign-in happens fresh afterwards;
+        // no reason to keep the Firebase credential in the browser.
+        firebaseSignOut().catch(() => {});
         toast('Account created. We sent a verification link to your email (check spam too) - click it, then sign in.');
         setMode('login');
         setPassword('');

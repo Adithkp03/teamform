@@ -27,10 +27,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
   const logout = () => {
     const rt = getRefreshToken();
-    if (rt) {
-      // Best-effort server-side revocation; local session ends regardless.
-      api('/api/auth/logout', { method: 'POST', body: { refresh_token: rt } }).catch(() => {});
-    }
+    // Best-effort server-side revocation: the legacy body token if one is
+    // still stored, plus the HttpOnly session cookie (sent automatically);
+    // the local session ends regardless.
+    api('/api/auth/logout', { method: 'POST', body: rt ? { refresh_token: rt } : {} }).catch(() => {});
     clearTokens();
     // End the Firebase browser session too (no-op for dev-login users).
     firebaseSignOut().catch(() => {});

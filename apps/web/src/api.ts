@@ -4,7 +4,10 @@ export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
 }
 
-const BASE = import.meta.env.VITE_API_URL ?? '';
+// Same-origin API: deployed behind the web host's /api rewrite (vercel.json),
+// proxied by vite dev/preview locally. Same-origin is what lets the refresh
+// session live in a first-party HttpOnly cookie instead of JS-readable storage.
+const BASE = '';
 
 export const getToken = () => localStorage.getItem('tf_token');
 export const getRefreshToken = () => localStorage.getItem('tf_refresh');
@@ -32,16 +35,29 @@ export function refreshAccessToken(): Promise<string | null> {
   if (!refreshing) {
     refreshing = (async () => {
       const rt = getRefreshToken();
-      if (!rt) return null;
       try {
+        // The HttpOnly session cookie flows automatically (same-origin). A
+        // legacy localStorage refresh token - from before the cookie upgrade -
+        // is sent explicitly one last time; the server rotates it, sets the
+        // cookie, and we drop the stored copy below.
         const res = await fetch(`${BASE}/api/auth/refresh`, {
           method: 'POST',
+          credentials: 'include',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ refresh_token: rt }),
+          body: JSON.stringify(rt ? { refresh_token: rt } : {}),
         });
         if (!res.ok) return null;
         const data = await res.json();
-        storeTokens(data.token, data.user_id, data.refresh_token);
+        if (data.cookie_set) {
+          // Cookie-backed server: never persist the refresh token in
+          // JS-readable storage, and remove any legacy stored copy.
+          localStorage.removeItem('tf_refresh');
+          storeTokens(data.token, data.user_id);
+        } else {
+          // Older server without cookie support (rollout window): keep the
+          // rotated body token so the session survives.
+          storeTokens(data.token, data.user_id, data.refresh_token);
+        }
         return data.token as string;
       } catch {
         return null;
@@ -72,7 +88,9 @@ export async function api<T = any>(
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith('/api/auth/')) {
       // Expired access token: refresh once and retry the original request.
-      if (!retried && getRefreshToken()) {
+      // The session may be cookie-only, so attempt the refresh even when no
+      // localStorage refresh token exists.
+      if (!retried) {
         const nt = await refreshAccessToken();
         if (nt) return api(path, { ...opts, token: nt }, true);
       }

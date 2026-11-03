@@ -1,7 +1,8 @@
 import { initializeApp, getApps } from '@firebase/app';
 import {
-  getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  sendEmailVerification, sendPasswordResetEmail, signOut, type User,
+  getAuth, setPersistence, inMemoryPersistence, signInWithEmailAndPassword,
+  createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail,
+  signOut, type User,
 } from '@firebase/auth';
 
 // Public client configuration (shipped to browsers by design; not a secret).
@@ -15,13 +16,20 @@ const firebaseConfig = {
 
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 export const firebaseAuth = getAuth(app);
+// Never persist the Firebase credential (IndexedDB/localStorage by default):
+// the app session - an HttpOnly cookie - owns persistence, so the Firebase
+// refresh token lives in memory only and is signed out right after the app
+// exchange. Awaiting this before sign-in/up avoids a persistence race.
+const persistenceReady = setPersistence(firebaseAuth, inMemoryPersistence).catch(() => {});
 
 export async function firebaseSignIn(email: string, password: string): Promise<User> {
+  await persistenceReady;
   const cred = await signInWithEmailAndPassword(firebaseAuth, email, password);
   return cred.user;
 }
 
 export async function firebaseSignUp(email: string, password: string): Promise<User> {
+  await persistenceReady;
   const cred = await createUserWithEmailAndPassword(firebaseAuth, email, password);
   // Verification email comes from Firebase itself; the account cannot be
   // exchanged for app tokens until the address is verified (server-enforced).

@@ -53205,6 +53205,37 @@ function genInviteCode() {
   return Array.from(bytes, (b) => CODE_ALPHABET[b % 32]).join("");
 }
 
+// src/session-cookie.ts
+var REFRESH_COOKIE = "tf_rt";
+var MAX_AGE_SEC = 30 * 24 * 3600;
+var attrs = () => `Path=/api/auth; HttpOnly; SameSite=Lax${prodLike() ? "; Secure" : ""}`;
+function parseRefreshCookie(header) {
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() !== REFRESH_COOKIE) continue;
+    const v = part.slice(eq + 1).trim();
+    return /^[0-9a-f]{64}$/.test(v) ? v : null;
+  }
+  return null;
+}
+function setRefreshCookie(reply, token) {
+  reply.header("set-cookie", `${REFRESH_COOKIE}=${token}; ${attrs()}; Max-Age=${MAX_AGE_SEC}`);
+}
+function clearRefreshCookie(reply) {
+  reply.header("set-cookie", `${REFRESH_COOKIE}=; ${attrs()}; Max-Age=0`);
+}
+var allowedOrigins = () => {
+  const configured = (process.env.CORS_ORIGIN ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return configured.length ? configured : ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3101", "http://127.0.0.1:3101"];
+};
+function assertCookieOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) return;
+  if (!allowedOrigins().includes(origin)) throw errors.forbidden("Origin not allowed");
+}
+
 // src/routes/auth.ts
 var hashToken2 = (t) => createHash2("sha256").update(t).digest("hex");
 var LEGACY_SESSION_SUNSET = new Date(process.env.LEGACY_SESSION_SUNSET ?? "2026-11-10T00:00:00Z");
@@ -53234,7 +53265,7 @@ async function authRoutes(app2) {
       return { token: signToken(id), user_id: id };
     });
   }
-  app2.post("/api/auth/signup", async (req) => {
+  app2.post("/api/auth/signup", async (req, reply) => {
     const body = parse(credSchema.extend({ display_name: external_exports.string().trim().min(1).max(80) }), req.body);
     await rateLimit(`auth:${req.ip}`, 10, 60);
     const password_hash = await bcryptjs_default.hash(body.password, 10);
@@ -53251,9 +53282,10 @@ async function authRoutes(app2) {
     const verifyToken2 = await issueActionToken(id, "verify");
     await sendAuthMail(body.email.toLowerCase(), "verify", authMailUrl("verify", verifyToken2));
     const session = await issueRefreshToken(id);
-    return { token: signToken(id, session.familyId), refresh_token: session.token, user_id: id };
+    setRefreshCookie(reply, session.token);
+    return { token: signToken(id, session.familyId), refresh_token: session.token, user_id: id, cookie_set: true };
   });
-  app2.post("/api/auth/login", async (req) => {
+  app2.post("/api/auth/login", async (req, reply) => {
     const body = parse(credSchema, req.body);
     await rateLimit(`auth:${req.ip}`, 10, 60);
     const { rows } = await pool.query(
@@ -53264,9 +53296,10 @@ async function authRoutes(app2) {
       throw errors.unauthorized();
     }
     const session = await issueRefreshToken(rows[0].id);
-    return { token: signToken(rows[0].id, session.familyId), refresh_token: session.token, user_id: rows[0].id };
+    setRefreshCookie(reply, session.token);
+    return { token: signToken(rows[0].id, session.familyId), refresh_token: session.token, user_id: rows[0].id, cookie_set: true };
   });
-  app2.post("/api/auth/firebase", async (req) => {
+  app2.post("/api/auth/firebase", async (req, reply) => {
     const body = parse(external_exports.object({
       id_token: external_exports.string().min(1).max(8192),
       firebase_refresh_token: external_exports.string().min(1).max(4096),
@@ -53331,9 +53364,10 @@ async function authRoutes(app2) {
       `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
       [encryptRefreshToken(bound.refreshToken), session.id]
     );
-    return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId };
+    setRefreshCookie(reply, session.token);
+    return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId, cookie_set: true };
   });
-  app2.post("/api/auth/firebase/claim", async (req) => {
+  app2.post("/api/auth/firebase/claim", async (req, reply) => {
     const body = parse(external_exports.object({
       id_token: external_exports.string().min(1).max(8192),
       firebase_refresh_token: external_exports.string().min(1).max(4096),
@@ -53424,14 +53458,19 @@ async function authRoutes(app2) {
       `UPDATE auth_refresh_tokens SET firebase_refresh_token = $1 WHERE id = $2`,
       [encryptRefreshToken(bound.refreshToken), session.id]
     );
-    return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId };
+    setRefreshCookie(reply, session.token);
+    return { token: signToken(userId, session.familyId), refresh_token: session.token, user_id: userId, cookie_set: true };
   });
-  app2.post("/api/auth/refresh", async (req) => {
-    const body = parse(external_exports.object({ refresh_token: external_exports.string().min(1).max(128) }), req.body);
+  app2.post("/api/auth/refresh", async (req, reply) => {
+    const body = parse(external_exports.object({ refresh_token: external_exports.string().min(1).max(128).optional() }), req.body ?? {});
     await rateLimit(`auth:${req.ip}`, 30, 60);
+    const cookieToken = parseRefreshCookie(req.headers.cookie);
+    if (!body.refresh_token && cookieToken) assertCookieOrigin(req);
+    const presentedToken = body.refresh_token ?? cookieToken;
+    if (!presentedToken) throw errors.unauthorized();
     const presented = await pool.query(
       `SELECT user_id, COALESCE(family_id, id) AS fam FROM auth_refresh_tokens WHERE token_hash = $1 AND revoked_at IS NULL`,
-      [hashToken2(body.refresh_token)]
+      [hashToken2(presentedToken)]
     );
     if (presented.rows.length) {
       const famId = presented.rows[0].fam;
@@ -53462,13 +53501,18 @@ async function authRoutes(app2) {
         throw errors.unauthorized();
       }
     }
-    const { userId, token, familyId } = await rotateRefreshToken(body.refresh_token);
-    return { token: signToken(userId, familyId), refresh_token: token, user_id: userId };
+    const { userId, token, familyId } = await rotateRefreshToken(presentedToken);
+    setRefreshCookie(reply, token);
+    return { token: signToken(userId, familyId), refresh_token: token, user_id: userId, cookie_set: true };
   });
-  app2.post("/api/auth/logout", async (req) => {
-    const body = parse(external_exports.object({ refresh_token: external_exports.string().min(1).max(128) }), req.body);
+  app2.post("/api/auth/logout", async (req, reply) => {
+    const body = parse(external_exports.object({ refresh_token: external_exports.string().min(1).max(128).optional() }), req.body ?? {});
     await rateLimit(`auth:${req.ip}`, 30, 60);
-    await revokeRefreshToken(body.refresh_token);
+    const cookieToken = parseRefreshCookie(req.headers.cookie);
+    if (cookieToken) assertCookieOrigin(req);
+    if (body.refresh_token) await revokeRefreshToken(body.refresh_token);
+    if (cookieToken && cookieToken !== body.refresh_token) await revokeRefreshToken(cookieToken);
+    clearRefreshCookie(reply);
     return { ok: true };
   });
   app2.post("/api/auth/forgot-password", async (req) => {
