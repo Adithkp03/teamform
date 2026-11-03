@@ -46917,6 +46917,150 @@ var errors = {
 // src/app.ts
 init_metrics();
 
+// src/firebase.ts
+import { createVerify, createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
+var testVerifier = null;
+var testRedeemer = null;
+var prodLike = () => Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
+function testModeAllowed() {
+  return process.env.FIREBASE_TEST_MODE === "true" && !prodLike();
+}
+function firebaseTestMode() {
+  return testModeAllowed();
+}
+function projectId() {
+  const pid = process.env.FIREBASE_PROJECT_ID;
+  if (!pid) throw errors.unavailable("firebase_not_configured", "Sign-in is not configured on this deployment");
+  return pid;
+}
+function apiKey() {
+  const key = process.env.FIREBASE_WEB_API_KEY;
+  if (!key) throw errors.unavailable("firebase_not_configured", "Sign-in is not configured on this deployment");
+  return key;
+}
+var CERTS_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
+var certCache = null;
+async function fetchCerts(forceRefresh = false) {
+  if (!forceRefresh && certCache && Date.now() < certCache.expiresAt) return certCache.certs;
+  let res;
+  try {
+    res = await fetch(CERTS_URL);
+  } catch {
+    throw errors.unavailable("firebase_unavailable", "Sign-in verification is temporarily unavailable");
+  }
+  if (!res.ok) throw errors.unavailable("firebase_unavailable", "Sign-in verification is temporarily unavailable");
+  const certs = await res.json();
+  const cc = res.headers.get("cache-control") ?? "";
+  const m = /max-age=(\d+)/.exec(cc);
+  const maxAgeSec = m ? Math.min(Number(m[1]), 24 * 3600) : 3600;
+  certCache = { certs, expiresAt: Date.now() + maxAgeSec * 1e3 };
+  return certs;
+}
+function b64urlJson(part) {
+  try {
+    return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+  } catch {
+    throw errors.unauthorized();
+  }
+}
+async function verifyFirebaseIdToken(idToken) {
+  if (testVerifier) return testVerifier(idToken);
+  if (process.env.FIREBASE_TEST_MODE === "true") {
+    if (!testModeAllowed()) throw new Error("FIREBASE_TEST_MODE is forbidden in production");
+    try {
+      return JSON.parse(Buffer.from(idToken, "base64url").toString("utf8"));
+    } catch {
+      throw errors.unauthorized();
+    }
+  }
+  const pid = projectId();
+  const parts = idToken.split(".");
+  if (parts.length !== 3) throw errors.unauthorized();
+  const [h, p, s] = parts;
+  const header = b64urlJson(h);
+  if (header.alg !== "RS256" || typeof header.kid !== "string") throw errors.unauthorized();
+  let certs = await fetchCerts();
+  let cert = certs[header.kid];
+  if (!cert) {
+    certs = await fetchCerts(true);
+    cert = certs[header.kid];
+    if (!cert) throw errors.unauthorized();
+  }
+  const verifier = createVerify("RSA-SHA256");
+  verifier.update(`${h}.${p}`);
+  let ok = false;
+  try {
+    ok = verifier.verify(cert, s, "base64url");
+  } catch {
+    ok = false;
+  }
+  if (!ok) throw errors.unauthorized();
+  const claims = b64urlJson(p);
+  const now = Math.floor(Date.now() / 1e3);
+  if (claims.iss !== `https://securetoken.google.com/${pid}`) throw errors.unauthorized();
+  if (claims.aud !== pid) throw errors.unauthorized();
+  if (typeof claims.exp !== "number" || claims.exp <= now) throw errors.unauthorized();
+  if (typeof claims.iat !== "number" || claims.iat > now + 60) throw errors.unauthorized();
+  if (typeof claims.sub !== "string" || claims.sub.length === 0 || claims.sub.length > 128) throw errors.unauthorized();
+  return { uid: claims.sub, email: claims.email, email_verified: claims.email_verified };
+}
+async function redeemFirebaseRefreshToken(refreshToken) {
+  if (testRedeemer) return testRedeemer(refreshToken);
+  if (process.env.FIREBASE_TEST_MODE === "true") {
+    if (!testModeAllowed()) throw new Error("FIREBASE_TEST_MODE is forbidden in production");
+    const m = /^fb-refresh-(.+)$/.exec(refreshToken);
+    if (!m) return { ok: false, reason: "invalid" };
+    return { ok: true, identity: { uid: `test-${m[1]}`, email: m[1], email_verified: true }, refreshToken };
+  }
+  let res;
+  try {
+    res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${apiKey()}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
+    });
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+  if (!res.ok) {
+    if (res.status >= 500) return { ok: false, reason: "unavailable" };
+    return { ok: false, reason: "invalid" };
+  }
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+  if (typeof data?.id_token !== "string") return { ok: false, reason: "unavailable" };
+  let identity;
+  try {
+    identity = await verifyFirebaseIdToken(data.id_token);
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+  const next = typeof data.refresh_token === "string" && data.refresh_token ? data.refresh_token : refreshToken;
+  return { ok: true, identity, refreshToken: next };
+}
+function encKey() {
+  const secret2 = process.env.JWT_SECRET;
+  if (!secret2) throw new Error("JWT_SECRET is not set");
+  return createHmac("sha256", secret2).update("teamform-firebase-refresh-token-store").digest();
+}
+function encryptRefreshToken(token) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", encKey(), iv);
+  const ct = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
+  return `${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${ct.toString("base64url")}`;
+}
+function decryptRefreshToken(stored) {
+  const [iv, tag, ct] = stored.split(".");
+  if (!iv || !tag || !ct) throw new Error("corrupt stored firebase credential");
+  const decipher = createDecipheriv("aes-256-gcm", encKey(), Buffer.from(iv, "base64url"));
+  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  return Buffer.concat([decipher.update(Buffer.from(ct, "base64url")), decipher.final()]).toString("utf8");
+}
+
 // src/mailer.ts
 var PROVIDER = process.env.MAIL_PROVIDER ?? (process.env.VERCEL || process.env.NODE_ENV === "production" ? "none" : "log");
 var mailConfigured = PROVIDER !== "none";
@@ -50981,7 +51125,7 @@ var NEVER = INVALID;
 // ../../node_modules/bcryptjs/index.js
 import nodeCrypto from "crypto";
 var randomFallback = null;
-function randomBytes(len) {
+function randomBytes2(len) {
   try {
     return crypto.getRandomValues(new Uint8Array(len));
   } catch {
@@ -51013,7 +51157,7 @@ function genSaltSync(rounds, seed_length) {
   if (rounds < 10) salt.push("0");
   salt.push(rounds.toString());
   salt.push("$");
-  salt.push(base64_encode(randomBytes(BCRYPT_SALT_LEN), BCRYPT_SALT_LEN));
+  salt.push(base64_encode(randomBytes2(BCRYPT_SALT_LEN), BCRYPT_SALT_LEN));
   return salt.join("");
 }
 function genSalt(rounds, seed_length, callback) {
@@ -52749,7 +52893,12 @@ async function withTx(fn) {
 }
 
 // src/ratelimit.ts
+async function pruneRateLimits() {
+  await pool.query(`DELETE FROM rate_limits WHERE window_start < now() - interval '2 hours'`);
+}
 async function rateLimit(key, limit, windowSeconds = 60) {
+  if (Math.random() < 0.02) pruneRateLimits().catch(() => {
+  });
   const { rows } = await pool.query(
     `INSERT INTO rate_limits (key, window_start, count)
      VALUES ($1, date_bin(make_interval(secs => $2::int), now(), timestamptz 'epoch'), 1)
@@ -52762,7 +52911,7 @@ async function rateLimit(key, limit, windowSeconds = 60) {
 
 // src/auth.ts
 var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
-import { createHash, randomBytes as randomBytes2 } from "node:crypto";
+import { createHash, randomBytes as randomBytes3 } from "node:crypto";
 var secret = () => {
   const s = process.env.JWT_SECRET;
   if (!s) throw new Error("JWT_SECRET is not set");
@@ -52789,7 +52938,7 @@ async function authenticate(req, _reply) {
 }
 var hashToken = (t) => createHash("sha256").update(t).digest("hex");
 async function issueRefreshToken(userId, familyId) {
-  const token = randomBytes2(32).toString("hex");
+  const token = randomBytes3(32).toString("hex");
   const { rows } = await pool.query(
     `INSERT INTO auth_refresh_tokens (user_id, token_hash, expires_at, family_id)
      VALUES ($1, $2, now() + interval '30 days', COALESCE($3::uuid, gen_random_uuid())) RETURNING id, family_id`,
@@ -52875,7 +53024,7 @@ async function rotateRefreshToken(oldToken) {
     );
     const row = cur[0];
     const mintInFamily = async () => {
-      const token = randomBytes2(32).toString("hex");
+      const token = randomBytes3(32).toString("hex");
       const ins = await client.query(
         `INSERT INTO auth_refresh_tokens (user_id, token_hash, expires_at, family_id)
          VALUES ($1, $2, $3, $4) RETURNING id`,
@@ -52919,7 +53068,7 @@ async function rotateRefreshToken(oldToken) {
   }
 }
 async function issueActionToken(userId, kind) {
-  const token = randomBytes2(24).toString("hex");
+  const token = randomBytes3(24).toString("hex");
   const ttl = kind === "reset" ? "30 minutes" : "7 days";
   await pool.query(
     `INSERT INTO auth_action_tokens (user_id, kind, token_hash, expires_at)
@@ -52950,150 +53099,6 @@ async function requireOrganizer(req, reply) {
   );
   const email = rows[0]?.email;
   if (!email || !allowed.has(email)) throw errors.forbidden("Organizer access required");
-}
-
-// src/firebase.ts
-import { createVerify, createCipheriv, createDecipheriv, createHmac, randomBytes as randomBytes3 } from "node:crypto";
-var testVerifier = null;
-var testRedeemer = null;
-var prodLike = () => Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
-function testModeAllowed() {
-  return process.env.FIREBASE_TEST_MODE === "true" && !prodLike();
-}
-function firebaseTestMode() {
-  return testModeAllowed();
-}
-function projectId() {
-  const pid = process.env.FIREBASE_PROJECT_ID;
-  if (!pid) throw errors.unavailable("firebase_not_configured", "Sign-in is not configured on this deployment");
-  return pid;
-}
-function apiKey() {
-  const key = process.env.FIREBASE_WEB_API_KEY;
-  if (!key) throw errors.unavailable("firebase_not_configured", "Sign-in is not configured on this deployment");
-  return key;
-}
-var CERTS_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
-var certCache = null;
-async function fetchCerts(forceRefresh = false) {
-  if (!forceRefresh && certCache && Date.now() < certCache.expiresAt) return certCache.certs;
-  let res;
-  try {
-    res = await fetch(CERTS_URL);
-  } catch {
-    throw errors.unavailable("firebase_unavailable", "Sign-in verification is temporarily unavailable");
-  }
-  if (!res.ok) throw errors.unavailable("firebase_unavailable", "Sign-in verification is temporarily unavailable");
-  const certs = await res.json();
-  const cc = res.headers.get("cache-control") ?? "";
-  const m = /max-age=(\d+)/.exec(cc);
-  const maxAgeSec = m ? Math.min(Number(m[1]), 24 * 3600) : 3600;
-  certCache = { certs, expiresAt: Date.now() + maxAgeSec * 1e3 };
-  return certs;
-}
-function b64urlJson(part) {
-  try {
-    return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
-  } catch {
-    throw errors.unauthorized();
-  }
-}
-async function verifyFirebaseIdToken(idToken) {
-  if (testVerifier) return testVerifier(idToken);
-  if (process.env.FIREBASE_TEST_MODE === "true") {
-    if (!testModeAllowed()) throw new Error("FIREBASE_TEST_MODE is forbidden in production");
-    try {
-      return JSON.parse(Buffer.from(idToken, "base64url").toString("utf8"));
-    } catch {
-      throw errors.unauthorized();
-    }
-  }
-  const pid = projectId();
-  const parts = idToken.split(".");
-  if (parts.length !== 3) throw errors.unauthorized();
-  const [h, p, s] = parts;
-  const header = b64urlJson(h);
-  if (header.alg !== "RS256" || typeof header.kid !== "string") throw errors.unauthorized();
-  let certs = await fetchCerts();
-  let cert = certs[header.kid];
-  if (!cert) {
-    certs = await fetchCerts(true);
-    cert = certs[header.kid];
-    if (!cert) throw errors.unauthorized();
-  }
-  const verifier = createVerify("RSA-SHA256");
-  verifier.update(`${h}.${p}`);
-  let ok = false;
-  try {
-    ok = verifier.verify(cert, s, "base64url");
-  } catch {
-    ok = false;
-  }
-  if (!ok) throw errors.unauthorized();
-  const claims = b64urlJson(p);
-  const now = Math.floor(Date.now() / 1e3);
-  if (claims.iss !== `https://securetoken.google.com/${pid}`) throw errors.unauthorized();
-  if (claims.aud !== pid) throw errors.unauthorized();
-  if (typeof claims.exp !== "number" || claims.exp <= now) throw errors.unauthorized();
-  if (typeof claims.iat !== "number" || claims.iat > now + 60) throw errors.unauthorized();
-  if (typeof claims.sub !== "string" || claims.sub.length === 0 || claims.sub.length > 128) throw errors.unauthorized();
-  return { uid: claims.sub, email: claims.email, email_verified: claims.email_verified };
-}
-async function redeemFirebaseRefreshToken(refreshToken) {
-  if (testRedeemer) return testRedeemer(refreshToken);
-  if (process.env.FIREBASE_TEST_MODE === "true") {
-    if (!testModeAllowed()) throw new Error("FIREBASE_TEST_MODE is forbidden in production");
-    const m = /^fb-refresh-(.+)$/.exec(refreshToken);
-    if (!m) return { ok: false, reason: "invalid" };
-    return { ok: true, identity: { uid: `test-${m[1]}`, email: m[1], email_verified: true }, refreshToken };
-  }
-  let res;
-  try {
-    res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${apiKey()}`, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
-    });
-  } catch {
-    return { ok: false, reason: "unavailable" };
-  }
-  if (!res.ok) {
-    if (res.status >= 500) return { ok: false, reason: "unavailable" };
-    return { ok: false, reason: "invalid" };
-  }
-  let data;
-  try {
-    data = await res.json();
-  } catch {
-    return { ok: false, reason: "unavailable" };
-  }
-  if (typeof data?.id_token !== "string") return { ok: false, reason: "unavailable" };
-  let identity;
-  try {
-    identity = await verifyFirebaseIdToken(data.id_token);
-  } catch {
-    return { ok: false, reason: "unavailable" };
-  }
-  const next = typeof data.refresh_token === "string" && data.refresh_token ? data.refresh_token : refreshToken;
-  return { ok: true, identity, refreshToken: next };
-}
-function encKey() {
-  const secret2 = process.env.JWT_SECRET;
-  if (!secret2) throw new Error("JWT_SECRET is not set");
-  return createHmac("sha256", secret2).update("teamform-firebase-refresh-token-store").digest();
-}
-function encryptRefreshToken(token) {
-  const iv = randomBytes3(12);
-  const cipher = createCipheriv("aes-256-gcm", encKey(), iv);
-  const ct = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
-  return `${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${ct.toString("base64url")}`;
-}
-function decryptRefreshToken(stored) {
-  const [iv, tag, ct] = stored.split(".");
-  if (!iv || !tag || !ct) throw new Error("corrupt stored firebase credential");
-  const decipher = createDecipheriv("aes-256-gcm", encKey(), Buffer.from(iv, "base64url"));
-  decipher.setAuthTag(Buffer.from(tag, "base64url"));
-  return Buffer.concat([decipher.update(Buffer.from(ct, "base64url")), decipher.final()]).toString("utf8");
 }
 
 // src/routes/auth.ts
@@ -53465,6 +53470,9 @@ var STALE_MS = 6e4;
 function hash2(value) {
   return crypto2.createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 }
+async function pruneIdempotencyKeys() {
+  await pool.query(`DELETE FROM idempotency_keys WHERE updated_at < now() - interval '24 hours'`);
+}
 function idempotent(endpoint, handler2) {
   return async (req, reply) => {
     const key = req.headers["idempotency-key"];
@@ -53476,6 +53484,8 @@ function idempotent(endpoint, handler2) {
     if (key.length < 8 || key.length > 128) {
       throw errors.badRequest("Idempotency-Key must be 8-128 characters");
     }
+    if (Math.random() < 0.02) pruneIdempotencyKeys().catch(() => {
+    });
     const userId = req.userId;
     const paramsHash = hash2({ endpoint, body: req.body });
     const claimed = await pool.query(
@@ -53788,6 +53798,172 @@ async function teamRoutes(app2) {
       return { status: 200, body: updated.rows[0] };
     });
   }));
+  app2.delete("/api/requests/:id", { preHandler: authenticate }, respond(async (req) => {
+    parse(uuidParam, req.params.id);
+    return withTx(async (c) => {
+      const { rows } = await c.query(
+        `UPDATE join_requests SET status = 'cancelled', decided_at = now(), decided_by = $2
+         WHERE id = $1 AND user_id = $2 AND status = 'pending' RETURNING team_id, hackathon_id`,
+        [req.params.id, req.userId]
+      );
+      if (!rows.length) throw errors.notFound("Pending request not found (it may already be decided)");
+      await audit(c, rows[0].hackathon_id, rows[0].team_id, req.userId, "join_request_cancelled", { request_id: req.params.id, reason: "requester_cancelled" });
+      return { status: 200, body: { ok: true } };
+    });
+  }));
+  const inviteSchema = external_exports.object({ user_id: external_exports.string().uuid() });
+  app2.post("/api/teams/:id/invitations", { preHandler: authenticate }, idempotent("create_invitation", async (req) => {
+    await rateLimit(`invite:${req.userId}`, 10, 60);
+    const teamId = parse(uuidParam, req.params.id);
+    const body = parse(inviteSchema, req.body);
+    if (body.user_id === req.userId) throw errors.badRequest("You cannot invite yourself");
+    return withTx(async (c) => {
+      const { rows } = await c.query(
+        `SELECT t.id, t.hackathon_id, h.team_size_max,
+                (SELECT count(*)::int FROM team_members tm WHERE tm.team_id = t.id) AS member_count,
+                EXISTS(SELECT 1 FROM team_members tm WHERE tm.team_id = t.id AND tm.user_id = $2) AS inviter_is_member
+         FROM teams t JOIN hackathons h ON h.id = t.hackathon_id WHERE t.id = $1`,
+        [teamId, req.userId]
+      );
+      const team = rows[0];
+      if (!team) throw errors.notFound("Team not found");
+      if (!team.inviter_is_member) throw errors.forbidden("Only team members can invite people");
+      if (team.member_count >= team.team_size_max) throw errors.conflict("team_full", "This team is full");
+      const target = await c.query(
+        `SELECT p.id, p.looking_for_team,
+                EXISTS(SELECT 1 FROM team_members tm WHERE tm.user_id = p.id) AS on_a_team,
+                EXISTS(SELECT 1 FROM join_requests jr WHERE jr.team_id = $2 AND jr.user_id = p.id AND jr.status = 'pending') AS already_requested
+         FROM profiles p WHERE p.id = $1`,
+        [body.user_id, teamId]
+      );
+      const t = target.rows[0];
+      if (!t || !t.looking_for_team) throw errors.notFound("That person is not looking for a team");
+      if (t.on_a_team) throw errors.conflict("already_in_team", "That person is already on a team");
+      if (t.already_requested) throw errors.conflict("already_requested", "They already asked to join - accept their request instead");
+      try {
+        const r = await c.query(
+          `INSERT INTO team_invitations (team_id, hackathon_id, user_id, invited_by) VALUES ($1, $2, $3, $4) RETURNING *`,
+          [teamId, team.hackathon_id, body.user_id, req.userId]
+        );
+        await audit(c, team.hackathon_id, teamId, req.userId, "member_invited", { invitation_id: r.rows[0].id, user_id: body.user_id });
+        return { status: 201, body: { invitation: r.rows[0] } };
+      } catch (e) {
+        if (e.code === "23505") throw errors.conflict("invitation_already_pending", "Your team already invited this person");
+        throw e;
+      }
+    });
+  }));
+  app2.get("/api/teams/:id/invitations", { preHandler: authenticate }, async (req) => {
+    const teamId = parse(uuidParam, req.params.id);
+    const member = await pool.query(`SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`, [teamId, req.userId]);
+    if (!member.rowCount) throw errors.forbidden("Only team members can see invitations");
+    const { rows } = await pool.query(
+      `SELECT ti.id, ti.user_id, ti.created_at, ti.invited_by, p.display_name, p.skills, p.timezone, ip.display_name AS invited_by_name
+       FROM team_invitations ti
+       JOIN profiles p ON p.id = ti.user_id
+       JOIN profiles ip ON ip.id = ti.invited_by
+       WHERE ti.team_id = $1 AND ti.status = 'pending' ORDER BY ti.created_at`,
+      [teamId]
+    );
+    return { invitations: rows };
+  });
+  app2.get("/api/me/invitations", { preHandler: authenticate }, async (req) => {
+    const { rows } = await pool.query(
+      `SELECT ti.id, ti.team_id, ti.created_at, t.name AS team_name,
+              (SELECT count(*)::int FROM team_members tm WHERE tm.team_id = t.id) AS member_count,
+              h.team_size_max, h.team_size_min,
+              ip.display_name AS invited_by_name
+       FROM team_invitations ti
+       JOIN teams t ON t.id = ti.team_id
+       JOIN hackathons h ON h.id = ti.hackathon_id
+       JOIN profiles ip ON ip.id = ti.invited_by
+       WHERE ti.user_id = $1 AND ti.status = 'pending' ORDER BY ti.created_at`,
+      [req.userId]
+    );
+    return { invitations: rows };
+  });
+  app2.post("/api/invitations/:id/accept", { preHandler: authenticate }, respond(async (req) => {
+    parse(uuidParam, req.params.id);
+    return withTx(async (c) => {
+      const { rows } = await c.query(
+        `SELECT ti.*, h.team_size_max FROM team_invitations ti
+         JOIN teams t ON t.id = ti.team_id JOIN hackathons h ON h.id = ti.hackathon_id
+         WHERE ti.id = $1 FOR UPDATE OF ti, t`,
+        [req.params.id]
+      );
+      const inv = rows[0];
+      if (!inv) throw errors.notFound("Invitation not found");
+      if (inv.user_id !== req.userId) throw errors.forbidden("Only the invited person can accept");
+      if (inv.status !== "pending") throw errors.conflict("invitation_already_decided", `Invitation is already ${inv.status}`);
+      const member = await c.query(`SELECT 1 FROM team_members WHERE hackathon_id = $1 AND user_id = $2`, [inv.hackathon_id, req.userId]);
+      if (member.rowCount) {
+        await c.query(`UPDATE team_invitations SET status = 'cancelled', decided_at = now(), decided_by = $2 WHERE id = $1`, [inv.id, req.userId]);
+        await audit(c, inv.hackathon_id, inv.team_id, req.userId, "invitation_auto_cancelled", { invitation_id: inv.id, reason: "invitee_already_in_team" });
+        return { status: 409, body: { error: { code: "already_in_team", message: "You are already on a team; this invitation was cancelled" } } };
+      }
+      const count = await c.query(`SELECT count(*)::int AS n FROM team_members WHERE team_id = $1`, [inv.team_id]);
+      if (count.rows[0].n >= inv.team_size_max) {
+        await c.query(`UPDATE team_invitations SET status = 'cancelled', decided_at = now(), decided_by = $2 WHERE id = $1`, [inv.id, req.userId]);
+        await audit(c, inv.hackathon_id, inv.team_id, req.userId, "invitation_auto_cancelled", { invitation_id: inv.id, reason: "team_full" });
+        return { status: 409, body: { error: { code: "team_full", message: "This team just filled up - the invitation was cancelled" } } };
+      }
+      await c.query(`UPDATE team_invitations SET status = 'accepted', decided_at = now(), decided_by = $2 WHERE id = $1`, [inv.id, req.userId]);
+      await c.query(`INSERT INTO team_members (team_id, hackathon_id, user_id, role) VALUES ($1, $2, $3, 'member')`, [inv.team_id, inv.hackathon_id, req.userId]);
+      const cancelledReqs = await c.query(
+        `UPDATE join_requests SET status = 'cancelled', decided_at = now()
+         WHERE user_id = $1 AND hackathon_id = $2 AND status = 'pending' RETURNING id, team_id`,
+        [req.userId, inv.hackathon_id]
+      );
+      for (const r of cancelledReqs.rows) {
+        await audit(c, inv.hackathon_id, r.team_id, req.userId, "join_request_auto_cancelled", { request_id: r.id, reason: "joined_another_team" });
+      }
+      const cancelledInvs = await c.query(
+        `UPDATE team_invitations SET status = 'cancelled', decided_at = now()
+         WHERE user_id = $1 AND hackathon_id = $2 AND status = 'pending' RETURNING id, team_id`,
+        [req.userId, inv.hackathon_id]
+      );
+      for (const r of cancelledInvs.rows) {
+        await audit(c, inv.hackathon_id, r.team_id, req.userId, "invitation_auto_cancelled", { invitation_id: r.id, reason: "joined_another_team" });
+      }
+      await audit(c, inv.hackathon_id, inv.team_id, req.userId, "member_joined", { via: "invitation", invitation_id: inv.id });
+      return { status: 200, body: { ok: true, team_id: inv.team_id } };
+    });
+  }));
+  app2.post("/api/invitations/:id/decline", { preHandler: authenticate }, respond(async (req) => {
+    parse(uuidParam, req.params.id);
+    return withTx(async (c) => {
+      const { rows } = await c.query(
+        `UPDATE team_invitations SET status = 'declined', decided_at = now(), decided_by = $2
+         WHERE id = $1 AND user_id = $2 AND status = 'pending' RETURNING team_id, hackathon_id`,
+        [req.params.id, req.userId]
+      );
+      if (!rows.length) {
+        const exists = await c.query(`SELECT user_id, status FROM team_invitations WHERE id = $1`, [req.params.id]);
+        if (!exists.rows.length) throw errors.notFound("Invitation not found");
+        if (exists.rows[0].user_id !== req.userId) throw errors.forbidden("Only the invited person can decline");
+        throw errors.conflict("invitation_already_decided", `Invitation is already ${exists.rows[0].status}`);
+      }
+      await audit(c, rows[0].hackathon_id, rows[0].team_id, req.userId, "invitation_declined", { invitation_id: req.params.id });
+      return { status: 200, body: { ok: true } };
+    });
+  }));
+  app2.delete("/api/invitations/:id", { preHandler: authenticate }, respond(async (req) => {
+    parse(uuidParam, req.params.id);
+    return withTx(async (c) => {
+      const { rows } = await c.query(
+        `SELECT ti.*, t.leader_id FROM team_invitations ti JOIN teams t ON t.id = ti.team_id
+         WHERE ti.id = $1 FOR UPDATE OF ti`,
+        [req.params.id]
+      );
+      const inv = rows[0];
+      if (!inv) throw errors.notFound("Invitation not found");
+      if (inv.invited_by !== req.userId && inv.leader_id !== req.userId) throw errors.forbidden("Only the inviter or the team leader can withdraw an invitation");
+      if (inv.status !== "pending") throw errors.conflict("invitation_already_decided", `Invitation is already ${inv.status}`);
+      await c.query(`UPDATE team_invitations SET status = 'cancelled', decided_at = now(), decided_by = $2 WHERE id = $1`, [inv.id, req.userId]);
+      await audit(c, inv.hackathon_id, inv.team_id, req.userId, "invitation_cancelled", { invitation_id: inv.id, user_id: inv.user_id, reason: "withdrawn" });
+      return { status: 200, body: { ok: true } };
+    });
+  }));
   app2.get("/api/teams/:id/audit", { preHandler: authenticate }, async (req) => {
     parse(uuidParam, req.params.id);
     const member = await pool.query(`SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`, [req.params.id, req.userId]);
@@ -53837,28 +54013,34 @@ async function boardRoutes(app2) {
     const cacheKey = [limit, query.teams_cursor ?? "", query.people_cursor ?? "", q ?? "", query.skill ?? "", query.timezone ?? "", query.min_open_seats ?? ""].join("|");
     return readBoard(cacheKey, async () => {
       const teams = pool.query(
+        // The timezone filter applies to TEAMS as well as people (matched on
+        // the leader's timezone, the same signal the card's match reason
+        // shows), so the board copy "filters apply across the whole board" is
+        // true. Filtering happens inside the page CTE so pagination counts
+        // only matching teams.
         `WITH page AS (
            SELECT t.id, t.name, t.wanted_skills, t.created_at, t.leader_id, t.member_count,
-                  h.team_size_min, h.team_size_max
+                  h.team_size_min, h.team_size_max,
+                  lp.display_name AS leader_name, lp.timezone AS leader_timezone,
+                  jr.id AS my_pending_request_id
            FROM teams t
            JOIN hackathons h ON h.id = t.hackathon_id
+           JOIN profiles lp ON lp.id = t.leader_id
+           LEFT JOIN join_requests jr ON jr.team_id = t.id AND jr.user_id = $8 AND jr.status = 'pending'
            WHERE t.looking_for_members
              AND t.member_count < h.team_size_max
              AND ($4::text IS NULL OR t.name ILIKE $4)
              AND ($5::text IS NULL OR $5 = ANY(t.wanted_skills))
              AND ($6::int IS NULL OR (h.team_size_max - t.member_count) >= $6)
+             AND ($7::text IS NULL OR lp.timezone = $7)
              AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2::timestamptz, $3::uuid))
            ORDER BY t.created_at DESC, t.id DESC
            LIMIT $1
          )
-         SELECT page.id, page.name, page.wanted_skills, page.created_at,
-                page.team_size_min, page.team_size_max, page.member_count,
-                (page.member_count >= page.team_size_min) AS is_complete,
-                p.display_name AS leader_name
+         SELECT page.*, (page.member_count >= page.team_size_min) AS is_complete
          FROM page
-         JOIN profiles p ON p.id = page.leader_id
          ORDER BY page.created_at DESC, page.id DESC`,
-        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null]
+        [limit, tc?.ts ?? null, tc?.id ?? null, q, query.skill ?? null, query.min_open_seats ?? null, query.timezone ?? null, req.userId]
       );
       const people = pool.query(
         `SELECT p.id, p.display_name, p.skills, p.timezone, p.last_active_at
@@ -53891,7 +54073,7 @@ async function boardRoutes(app2) {
     await pool.query("SELECT 1");
     return { ok: true, commit: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.COMMIT_SHA ?? null };
   });
-  app2.get("/api/metrics", async () => {
+  app2.get("/api/metrics", { preHandler: requireOrganizer }, async () => {
     const { snapshot: snapshot2 } = await Promise.resolve().then(() => (init_metrics(), metrics_exports));
     return snapshot2();
   });
@@ -53909,8 +54091,10 @@ async function suggestionRoutes(app2) {
            (SELECT count(*)::int FROM (SELECT unnest(p.skills) INTERSECT SELECT unnest(me.skills)) s) AS shared_skills,
            (SELECT coalesce(array_agg(x.skill), '{}') FROM (SELECT unnest(p.skills) AS skill EXCEPT SELECT unnest(me.skills)) x) AS complementary_skill_names,
            (SELECT coalesce(array_agg(y.skill), '{}') FROM (SELECT unnest(p.skills) AS skill INTERSECT SELECT unnest(me.skills)) y) AS shared_skill_names,
-           (CASE WHEN p.utc_offset_minutes = me.utc_offset_minutes THEN 2
-                 WHEN abs(p.utc_offset_minutes - me.utc_offset_minutes) <= 120 THEN 1
+           (CASE WHEN least((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440,
+                            1440 - ((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440)) = 0 THEN 2
+                 WHEN least((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440,
+                            1440 - ((abs(p.utc_offset_minutes - me.utc_offset_minutes)) % 1440)) <= 120 THEN 1
                  ELSE 0 END) AS timezone_fit
          FROM profiles p, me
          WHERE p.looking_for_team AND p.id <> $1
@@ -53929,8 +54113,8 @@ async function suggestionRoutes(app2) {
       const shared = r.shared_skill_names ?? [];
       if (comp.length) parts.push(`adds ${shortList(comp)} that you don't have`);
       if (shared.length) parts.push(`shares ${shortList(shared)} with you`);
-      if (r.timezone_fit === 2) parts.push("same timezone as you");
-      else if (r.timezone_fit === 1) parts.push("timezone within 2 hours of yours");
+      if (r.timezone_fit === 2) parts.push("same local hours as you");
+      else if (r.timezone_fit === 1) parts.push("local time within 2 hours of yours");
       else parts.push("in a different timezone");
       return { ...r, reason: parts.join("; ") };
     });
@@ -53948,7 +54132,7 @@ async function suggestionRoutes(app2) {
       }
     }
     return {
-      scoring: "score = 2*complementary_skills + 1*shared_skills + timezone_fit (same tz=2, within 2h=1, else 0)",
+      scoring: "score = 2*complementary_skills + 1*shared_skills + timezone_fit (same clock time=2, within 2h incl. UTC wraparound=1, else 0)",
       scoring_status: "transparent heuristic - being validated against real join outcomes and feedback",
       suggestions
     };
@@ -54020,6 +54204,10 @@ data: {"reason":"connected"}
           }
           if (payload.t === "join_requests") {
             if (!payload.team || await leaderOf(payload.team) !== userId) return;
+          }
+          if (payload.t === "team_invitations") {
+            const { rows: inv } = await client.query("SELECT user_id FROM team_invitations WHERE id = $1", [payload.id]);
+            if (inv[0]?.user_id !== userId) return;
           }
           reply.raw.write(`event: change
 data: ${msg.payload}
@@ -54132,6 +54320,15 @@ data: {"reason":"session_revoked"}
         if (!ledByUser.has(r.leader_id)) ledByUser.set(r.leader_id, /* @__PURE__ */ new Set());
         ledByUser.get(r.leader_id).add(r.id);
       }
+      const invIds = rows.filter((r) => r.t === "team_invitations").map((r) => r.row_id);
+      const inviteeOf = /* @__PURE__ */ new Map();
+      if (invIds.length) {
+        const { rows: invRows } = await pool.query(
+          "SELECT id, user_id FROM team_invitations WHERE id = ANY($1::uuid[])",
+          [invIds]
+        );
+        for (const r of invRows) inviteeOf.set(r.id, r.user_id);
+      }
       for (const c of clients) {
         if (c.closed) continue;
         const led = ledByUser.get(c.userId) ?? /* @__PURE__ */ new Set();
@@ -54140,6 +54337,10 @@ data: {"reason":"session_revoked"}
             const seq = BigInt(r.dispatched_seq);
             if (seq <= c.cursor) continue;
             if (r.t === "join_requests" && !led.has(r.team_id)) {
+              c.cursor = seq;
+              continue;
+            }
+            if (r.t === "team_invitations" && inviteeOf.get(r.row_id) !== c.userId) {
               c.cursor = seq;
               continue;
             }
@@ -54422,9 +54623,19 @@ async function organizerRoutes(app2) {
 // src/app.ts
 function buildApp(opts = {}) {
   const app2 = (0, import_fastify.default)({ logger: opts.logger ?? false, genReqId: () => crypto3.randomUUID() });
-  app2.register(import_cors.default, { origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(",") : true });
+  const corsOrigins = (process.env.CORS_ORIGIN ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (prodLike() && corsOrigins.length === 0) {
+    throw new Error("CORS_ORIGIN is not set: refusing to boot with an open cross-origin policy in a production-like environment");
+  }
+  app2.register(import_cors.default, {
+    origin: corsOrigins.length ? corsOrigins : ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3101", "http://127.0.0.1:3101"]
+  });
   app2.addHook("onSend", (req, reply, payload, done) => {
     reply.header("x-request-id", req.id);
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("x-frame-options", "DENY");
+    reply.header("referrer-policy", "no-referrer");
+    reply.header("content-security-policy", "default-src 'none'; frame-ancestors 'none'");
     done();
   });
   app2.addHook("onResponse", async (req, reply) => {
