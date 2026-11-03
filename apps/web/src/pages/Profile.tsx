@@ -94,7 +94,7 @@ export default function Profile() {
 
       <div className="rounded-xl border border-line bg-panel p-3 text-xs text-slate-400 space-y-2">
         <p className="font-semibold text-slate-700">Your data and privacy</p>
-        <p>Your display name, skills and timezone are visible to other signed-in participants while you are shown on the board or in suggestions. Suggestions you are shown, and your useful/not-useful votes, are recorded with your account so ranking quality can be measured; only allowlisted organizers can see those records, as aggregate counts. Impressions are deleted after 30 days.</p>
+        <p>Your display name, skills and timezone are visible to other signed-in participants while you are shown on the board or in suggestions. Suggestions you are shown, and your useful/not-useful votes, are recorded with your account so ranking quality can be measured; only allowlisted organizers can see those records, as aggregate counts. Suggestion impressions older than 30 days are deleted automatically as the app is used.</p>
         <button type="button" className="text-accent hover:underline"
           onClick={async () => {
             try {
