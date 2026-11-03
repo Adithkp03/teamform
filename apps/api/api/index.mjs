@@ -44872,6 +44872,11 @@ var init_esm = __esm({
 });
 
 // src/db.ts
+var db_exports = {};
+__export(db_exports, {
+  pool: () => pool,
+  withTx: () => withTx
+});
 async function withTx(fn) {
   const client = await pool.connect();
   try {
@@ -44959,7 +44964,11 @@ function snapshot() {
   }
   return out;
 }
+async function db() {
+  return (await Promise.resolve().then(() => (init_db(), db_exports))).pool;
+}
 async function flushToDb(now = Date.now()) {
+  const pool2 = await db();
   const windowStart = new Date(Math.floor(now / WINDOW_MS) * WINDOW_MS);
   let n = 0;
   for (const [route, m] of routes) {
@@ -44968,7 +44977,7 @@ async function flushToDb(now = Date.now()) {
     const dErr = m.errors - (prev?.errors ?? 0);
     const dLat = m.latency.map((c, i) => c - (prev?.latency[i] ?? 0));
     if (dReq === 0 && dErr === 0 && dLat.every((d) => d === 0)) continue;
-    await pool.query(
+    await pool2.query(
       `INSERT INTO metrics_rollups (window_start, route, requests, errors, latency_counts)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (window_start, route) DO UPDATE SET
@@ -44981,7 +44990,7 @@ async function flushToDb(now = Date.now()) {
     flushed.set(route, { requests: m.requests, errors: m.errors, latency: [...m.latency] });
     n++;
   }
-  await pool.query(`DELETE FROM metrics_rollups WHERE window_start < now() - interval '${RETENTION}'`);
+  await pool2.query(`DELETE FROM metrics_rollups WHERE window_start < now() - interval '${RETENTION}'`);
   return n;
 }
 function flushOnce() {
@@ -44993,7 +45002,8 @@ function flushOnce() {
   }
 }
 async function durable24h() {
-  const { rows } = await pool.query(
+  const pool2 = await db();
+  const { rows } = await pool2.query(
     `SELECT route, sum(requests)::int AS requests, sum(errors)::int AS errors
      FROM metrics_rollups WHERE window_start > now() - interval '24 hours'
      GROUP BY route ORDER BY requests DESC`
@@ -45004,7 +45014,6 @@ var buckets, routes, startedAt, sseClients, poolErrors, poolStats, WINDOW_MS, RE
 var init_metrics = __esm({
   "src/metrics.ts"() {
     "use strict";
-    init_db();
     buckets = [25, 50, 100, 200, 400, 1e3, Infinity];
     routes = /* @__PURE__ */ new Map();
     startedAt = Date.now();

@@ -57,14 +57,19 @@ export function snapshot() {
 // history is durable, aggregated across instances, and bounded. Best-effort:
 // flushes run on an interval (long-running server), on 1% of responses, and on
 // every /api/metrics read; analytics must never break the request path.
-import { pool } from './db.js';
-
 const WINDOW_MS = 5 * 60 * 1000;
 const RETENTION = "14 days";
 const flushed = new Map<string, RouteMetrics>();
 let flushing: Promise<unknown> | null = null;
 
+// Lazy import breaks the db.ts <-> metrics.ts module cycle: db.ts calls
+// setPoolStats during its own initialization, so a static import here leaves
+// db.ts bindings in the temporal dead zone when the bundle evaluates metrics
+// first (crashed the API at boot in the chaos container).
+async function db() { return (await import('./db.js')).pool; }
+
 export async function flushToDb(now = Date.now()): Promise<number> {
+  const pool = await db();
   const windowStart = new Date(Math.floor(now / WINDOW_MS) * WINDOW_MS);
   let n = 0;
   for (const [route, m] of routes) {
@@ -97,6 +102,7 @@ export function flushOnce(): void {
 }
 
 export async function durable24h() {
+  const pool = await db();
   const { rows } = await pool.query(
     `SELECT route, sum(requests)::int AS requests, sum(errors)::int AS errors
      FROM metrics_rollups WHERE window_start > now() - interval '24 hours'
