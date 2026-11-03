@@ -52,6 +52,7 @@ export default function Login() {
     });
     // Cookie-backed sessions are never written to localStorage; an older
     // server (rollout window) still needs the body token stored.
+    if (res.cookie_set) localStorage.setItem('tf_sess', '1');
     login(res.token, res.user_id, res.cookie_set ? undefined : res.refresh_token);
     // The app session is established: drop the Firebase browser credential.
     firebaseSignOut().catch(() => {});

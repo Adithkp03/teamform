@@ -23,6 +23,7 @@ export function clearTokens() {
   localStorage.removeItem('tf_token');
   localStorage.removeItem('tf_uid');
   localStorage.removeItem('tf_refresh');
+  localStorage.removeItem('tf_sess');
   window.dispatchEvent(new Event('tf-auth-changed'));
 }
 
@@ -46,12 +47,20 @@ export function refreshAccessToken(): Promise<string | null> {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(rt ? { refresh_token: rt } : {}),
         });
-        if (!res.ok) return null;
+        if (!res.ok) {
+          // Definitive refusal: the cookie session is gone - drop the restore
+          // hint so the next boot goes straight to sign-in.
+          if (res.status === 401 || res.status === 403) localStorage.removeItem('tf_sess');
+          return null;
+        }
         const data = await res.json();
         if (data.cookie_set) {
           // Cookie-backed server: never persist the refresh token in
-          // JS-readable storage, and remove any legacy stored copy.
+          // JS-readable storage, and remove any legacy stored copy. The
+          // non-secret tf_sess flag just marks that a cookie session exists,
+          // so the next boot can silently restore it (see auth.tsx).
           localStorage.removeItem('tf_refresh');
+          localStorage.setItem('tf_sess', '1');
           storeTokens(data.token, data.user_id);
         } else {
           // Older server without cookie support (rollout window): keep the

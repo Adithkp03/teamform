@@ -45,7 +45,16 @@ function LiveState() {
 }
 
 export default function App() {
-  const { token } = useAuth();
+  const { token, restoring } = useAuth();
+  if (restoring) {
+    return (
+      <div className="min-h-screen">
+        <main id="main" className="mx-auto max-w-7xl px-4 py-7 sm:px-8 sm:py-10">
+          <p role="status" className="text-sm text-slate-600">Restoring your session...</p>
+        </main>
+      </div>
+    );
+  }
   return (
     <div className="min-h-screen">
       <a href="#main" className="skip-link">Skip to content</a>
